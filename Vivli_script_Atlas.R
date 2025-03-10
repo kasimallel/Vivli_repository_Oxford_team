@@ -50,6 +50,7 @@ library(patchwork)
 library(openxlsx)
 library(RColorBrewer)
 library(ggrepel)
+library(openxlsx)
 #######
 
 #------------------------------------------------------------------------#
@@ -107,7 +108,6 @@ states_list_us_NOTinclud <- c(
 
 #print(variable_names)
 #####
-
 #------------------------------------------------------------------------#
 ####DATA Management, fixing antibiotics, creating resistance/susceptible, country and infection syndrome selection ##########
 #Adjusting name of ATBs and changing antibiotic values to 0/1.
@@ -218,7 +218,59 @@ data_atlas_us$Source[data_atlas_us$Source == "Blood Vessels"] <- "Blood"
 data_atlas_eu <- subset(data_atlas_eu, Source %in% c("Blood", "Blood Vessels", "Urine"))
 data_atlas_eu$Source[data_atlas_eu$Source == "Blood Vessels"] <- "Blood"
 # 415582 all // 125340 bsi and uti // 64540.
+
 #######
+
+######Creating UTI/BSI tests per 1000000 populations#########
+
+pop_data_us <- read.xlsx("/Users/lsh1807578/CISS Dropbox/kasim allel henriquez/B_Projects/0_UniversityofOxford/Vivli/data/data/Pop_size_USandEU.xlsx", sheet = 'pop_US')
+pop_data_eu <- read.xlsx("/Users/lsh1807578/CISS Dropbox/kasim allel henriquez/B_Projects/0_UniversityofOxford/Vivli/data/data/Pop_size_USandEU.xlsx", sheet = 'pop_EU')
+pop_data_eu <- pop_data_eu %>%
+  mutate(Year = as.numeric(Year))
+pop_data_us <- pop_data_us %>%
+  mutate(Year = as.numeric(Year))
+
+
+data_atlas_eu<- data_atlas_eu %>%
+  left_join(dplyr::select(pop_data_eu, Year, Country, Pop_size), by = c("Year", "Country"))
+data_atlas_us <- data_atlas_us %>%
+  left_join(dplyr::select(pop_data_us, Year, State, Pop_size), by = c("Year", "State"))
+#View(data_atlas %>% filter(Country == "United States") %>% dplyr::select(Country, Year, Pop_size))
+
+#generate a new row calculating the total number of data observations per country-year using data_atlas dataset, variable 'Country' and 'Year', if country is not 'United States'
+data_atlas_eu <- data_atlas_eu %>%
+  group_by(Country, Year) %>%
+  mutate(Total_isolates = if_else(Country != "United States", n(), NA_integer_)) %>%
+  ungroup()
+data_atlas_eu <- data_atlas_eu %>%
+  mutate(
+    test_p100000 = if_else(
+      !is.na(Total_isolates) & !is.na(Pop_size) & Pop_size > 0,  # Check for non-missing and positive Pop_size
+      (Total_isolates / Pop_size) * 100000,                     # Calculation
+      NA_real_                                                  # Assign NA if data is missing
+    )
+  )
+
+#US
+
+data_atlas_us <- data_atlas_us %>%
+  group_by(State, Year) %>%
+  mutate(Total_isolates = if_else(State != "United States", n(), NA_integer_)) %>%
+  ungroup()
+data_atlas_us <- data_atlas_us %>%
+  mutate(
+    test_p100000 = if_else(
+      !is.na(Total_isolates) & !is.na(Pop_size) & Pop_size > 0,  # Check for non-missing and positive Pop_size
+      (Total_isolates / Pop_size) * 100000,                     # Calculation
+      NA_real_                                                  # Assign NA if data is missing
+    )
+  )
+
+
+
+
+
+######
 
 #------------------------------------------------------------------------#
 #Creating sub-datasets for pathogens described in WHO list: https://iris.who.int/bitstream/handle/10665/376776/9789240093461-eng.pdf?sequence=1 #######
@@ -288,9 +340,11 @@ data_atlas_eu_medium<- subset(data_atlas_eu, Family == "Streptococcus pneumoniae
 
 ####### See how many cultures there are per year in the US and Europe, by source #######
 # Ensure the Year column is a factor
-data_atlas_us_allf$Year <- as.factor(data_atlas_us_allf$Year)
+data_atlas_us_allfent <- data_atlas_us_allf[data_atlas_us_allf$Family %in% c("Enterobacteriaceae", "Enterobacterales"), ]
+
+data_atlas_us_allfent$Year <- as.factor(data_atlas_us_allfent$Year)
 # Calculate the count of each source per year
-source_count_by_year <- data_atlas_us_allf %>%
+source_count_by_year <- data_atlas_us_allfent %>%
   group_by(Year, Source) %>%
   summarise(Count = n()) %>%
   ungroup()
@@ -329,9 +383,13 @@ ggsave(filename = "SamplesBloodUrine_US.tiff", plot = USA_samples, device = "tif
        path = base_pathOut,
        width = 11, height = 8, dpi = 500, units = "in") 
 
-data_atlas_eu_allf$Year <- as.factor(data_atlas_eu_allf$Year)
+
+data_atlas_eu_allfent <- data_atlas_eu_allf[data_atlas_eu_allf$Family %in% c("Enterobacteriaceae", "Enterobacterales"), ]
+
+
+data_atlas_eu_allfent$Year <- as.factor(data_atlas_eu_allfent$Year)
 # Calculate the count of each source per year
-source_count_by_year <- data_atlas_eu_allf %>%
+source_count_by_year <- data_atlas_eu_allfent %>%
   group_by(Year, Source) %>%
   summarise(Count = n()) %>%
   ungroup()
@@ -406,26 +464,76 @@ Cultur_bsiuti_stat_time<-ggplot(family2_year_summary2, aes(x = Year, y = State, 
 ggsave(filename = "Cultur_bsiuti_stat_time.tiff", plot = Cultur_bsiuti_stat_time, device = "tiff", 
        path = base_pathOut,
        width = 11, height = 8, dpi = 500, units = "in") 
+observation_table <- family2_year_summary2 %>%
+  pivot_wider(names_from = Year, values_from = Observations)
+
+# View the table
+print(observation_table)
+
+# Optionally, write to CSV for easier viewing
+write.csv(observation_table, "observations_per_state_by_year.csv", row.names = FALSE)
+
+data_atlas_eu_enterob_o <- subset(data_atlas_eu_orig, Family %in% c("Enterobacteriaceae", "Enterobacterales"))
+
+family2_year_summary2 <- data_atlas_eu_enterob_o %>%
+  group_by(Country,Year) %>%
+  summarise(Observations = n()) %>%
+  arrange(Country, Year)
+
+family2_year_summary2 <- data_atlas_eu_enterob %>%
+  group_by(Country,Year) %>%
+  summarise(Observations = n()) %>%
+  arrange(Country, Year)
+
+# Create the plot with text labels for observations
+Cultur_bsiuti_europ_time<-ggplot(family2_year_summary2, aes(x = Year, y = Country, fill = Observations)) +
+  geom_tile(color = "white") +  # Tiles with white borders
+  geom_text(aes(label = Observations), color = "black", size = 3) +  # Add text labels for observations
+  scale_fill_gradient(name = "Observations", low = "#F4CCCC", high = "#990000") +  # Lancet-style gradient
+  scale_x_continuous(breaks = seq(2004, 2022, by = 1)) +  # Set x-axis to display each year from 2004 to 2022
+  theme_minimal() +  # Minimal theme for a clean look
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    panel.grid.minor = element_blank(),  # Remove minor grid lines
+    axis.title = element_text(size = 12),  # Adjust axis title size
+    axis.text = element_text(size = 10),  # Adjust axis text size
+    plot.title = element_text(size = 14, face = "bold")  # Adjust plot title size and bold
+  ) +
+  labs(
+    title = "Number of observations per country by year",
+    x = "Year",
+    y = "European country"
+  )
+ggsave(filename = "Cultur_bsiuti_europ_time.tiff", plot = Cultur_bsiuti_europ_time, device = "tiff", 
+       path = base_pathOut,
+       width = 11, height = 8, dpi = 500, units = "in") 
+
+
+
+
+
+
 
 
 # Create a summary table of observations by Family and Year
-family2_year_summary <- data_atlas_us_allf %>%
-  group_by(Family2, Year) %>%
+family2_year_summary <- data_atlas_us_allfent %>%
+  group_by(Species, Year) %>%
   summarise(Observations = n()) %>%
-  arrange(Family2, Year)
+  arrange(Species, Year)
 # View the summary table
 print(family2_year_summary)
 
 # Convert the data to a wide format for the heatmap
-data_wide <- dcast(family2_year_summary, Family2 ~ Year, value.var = "Observations", fill = 0)
+data_wide <- dcast(family2_year_summary, Species ~ Year, value.var = "Observations", fill = 0)
 # Melt the data back into a long format for ggplot
-data_long <- melt(data_wide, id.vars = "Family2", variable.name = "Year", value.name = "Observations")
+data_long <- melt(data_wide, id.vars = "Species", variable.name = "Year", value.name = "Observations")
 # Convert Year to a factor for proper ordering in the plot
 data_long$Year <- factor(data_long$Year, levels = sort(unique(data_long$Year)))
 # Define colors 
 red_palette <- c("#FFCCCC", "#FF6666", "#FF0000", "#CC0000", "#990000")
 # Create the heatmap
-PathogenAvaiTime<-ggplot(data_long, aes(x = Year, y = Family2, fill = Observations)) +
+PathogenAvaiTime<-ggplot(data_long, aes(x = Year, y = Species, fill = Observations)) +
   geom_tile(color = "black") +  # Add black borders around the tiles
   scale_fill_gradientn(colors = red_palette, na.value = "grey80") +  # Use Lancet-style colors
   geom_text(aes(label = Observations), color = "white", size = 3) +  # Add the observation numbers on the tiles
@@ -439,7 +547,45 @@ PathogenAvaiTime<-ggplot(data_long, aes(x = Year, y = Family2, fill = Observatio
     legend.position = "right"
   )
 
-ggsave(filename = "PathogensAvailableTime_US.tiff", plot = PathogenAvaiTime, device = "tiff", 
+ggsave(filename = "PathogensAvailableTimeEnt_US.tiff", plot = PathogenAvaiTime, device = "tiff", 
+       path = base_pathOut,
+       width = 11, height = 8, dpi = 500, units = "in") 
+
+
+
+
+# Create a summary table of observations by Family and Year
+family2_year_summary <- data_atlas_eu_allfent %>%
+  group_by(Species, Year) %>%
+  summarise(Observations = n()) %>%
+  arrange(Species, Year)
+# View the summary table
+print(family2_year_summary)
+
+# Convert the data to a wide format for the heatmap
+data_wide <- dcast(family2_year_summary, Species ~ Year, value.var = "Observations", fill = 0)
+# Melt the data back into a long format for ggplot
+data_long <- melt(data_wide, id.vars = "Species", variable.name = "Year", value.name = "Observations")
+# Convert Year to a factor for proper ordering in the plot
+data_long$Year <- factor(data_long$Year, levels = sort(unique(data_long$Year)))
+# Define colors 
+red_palette <- c("#FFCCCC", "#FF6666", "#FF0000", "#CC0000", "#990000")
+# Create the heatmap
+PathogenAvaiTimeEU<-ggplot(data_long, aes(x = Year, y = Species, fill = Observations)) +
+  geom_tile(color = "black") +  # Add black borders around the tiles
+  scale_fill_gradientn(colors = red_palette, na.value = "grey80") +  # Use Lancet-style colors
+  geom_text(aes(label = Observations), color = "white", size = 3) +  # Add the observation numbers on the tiles
+  labs(title = "Number of observations by pathogen and year", fill = "Observations") +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(angle = 360, hjust = 1),
+    plot.title = element_text(hjust = 0, face = "bold"),
+    legend.position = "right"
+  )
+
+ggsave(filename = "PathogensAvailableTimeEnt_EU.tiff", plot = PathogenAvaiTimeEU, device = "tiff", 
        path = base_pathOut,
        width = 11, height = 8, dpi = 500, units = "in") 
 
@@ -806,7 +952,7 @@ carbapenem_heatmap <- ggplot(us_map_carbapenem, aes(x = long, y = lat, group = g
 cephalosporin_heatmap <- ggplot(us_map_cephalosporin, aes(x = long, y = lat, group = group, fill = Cephalosporin_res)) +
   geom_polygon(color = "black", size = 0.3) +
   scale_fill_viridis_c(option = "magma", direction = -1, na.value = "grey80") +
-  labs(title = "C. Cephalosporin resistance by US state", fill = "Cephalosporin\nresistance (%)") +
+  labs(title = "C. Cephalosporin resistance by US state", fill = "3GCR\nresistance (%)") +
   theme_void() +
   lancet_theme +
   theme(plot.title = element_text(hjust = 0, size = 12, face = "bold"))
@@ -1019,7 +1165,7 @@ Cephalosporin_trendEU<-ggplot(cephalosporin_resistance_by_year, aes(x = Year, y 
   geom_point(color = "black", size = 3, shape = 21, fill = "#D55E60", stroke = 0.5) + 
   labs(title = "",
        x = "Year",
-       y = "Third generation cephalosporin resistance (%) in Enterobacterales") +
+       y = "3GCR (%) in Enterobacterales") +
   theme_minimal() +  # Use a minimal theme for clarity
   theme(
     plot.title = element_text(hjust = 0, size = 14, face = "bold"),  # Align title to the left
@@ -1185,7 +1331,7 @@ carbapenem_heatmap2 <- ggplot(eu_map_carbapenem, aes(fill = Carbapenem_res)) +
 cephalosporin_heatmap2 <- ggplot(eu_map_cephalosporin, aes(fill = Cephalosporin_res)) +
   geom_sf(color = "black", size = 0.3) +
   scale_fill_viridis_c(option = "magma", direction = -1, na.value = "grey80") +
-  labs(title = "G. Cephalosporin resistance in Europe", fill = "Cephalosporin\n resistance (%)") +
+  labs(title = "G. 3GCR in Europe", fill = "3GCR (%)") +
   coord_sf(expand = FALSE) + 
   theme_minimal() +
   lancet_theme +
@@ -1982,7 +2128,7 @@ p <- ggplot(cephalosporin_resistance_by_year_state, aes(x = Year, y = Cephalospo
   facet_wrap(~ State, scales = "free_y") + # Facet by State, with independent y scales
   labs(title = "",
        x = "Year",
-       y = "3rd generation cephalosporin-resistance in Enterobacterales (%)") +
+       y = "3GCR in Enterobacterales (%)") +
   theme_minimal(base_size = 12) +  # Start with a minimal theme
   theme(
     text = element_text(family = "serif"), # Lancet uses serif fonts
@@ -2146,7 +2292,7 @@ p <- ggplot(cephalosporin_resistance_by_year_country, aes(x = Year, y = Cephalos
   facet_wrap(~ Country, scales = "fixed") + # Facet by State, with independent y scales
   labs(title = "",
        x = "Year",
-       y = "3rd generation cephalosporin-resistance in Enterobacterales (%)") +
+       y = "3GCR in Enterobacterales (%)") +
   theme_minimal(base_size = 12) +  # Start with a minimal theme
   theme(
     text = element_text(family = "serif"), # Lancet uses serif fonts
@@ -2517,720 +2663,7 @@ write.xlsx(final_table2, file = full_path)
 
 ######
 
-#------------------------------------------------------------------------------------------------------#
-#------------------------------------------------------------------------------------------------------#
-#------------------------------------------------------------------------------------------------------#
-# Analyses for the US states GAM SPATIOTEMPORAL 
-#------------------------------------------------------------------------------------------------------#
-#------------------------------------------------------------------------------------------------------#
-#------------------------------------------------------------------------------------------------------#
-
-######
-#STATE INFO US:  state_resistance_carbap state_resistance_cephalos state_resistance_firstline state_resistance_mdr.   ///#COUNTRY INFO:  country_resistance_carbap country_resistance_cephalos country_resistance_firstline  country_resistance_mdr 
-fit_gam_model <- function(state_resistance_carbap) {
-  # 1. Load Spatial Data and Resistance Data
-  states_shapefile <- states(cb = TRUE)
-  # 2. Convert 'states_shapefile' to 'sf' object if not already
-  if (!inherits(states_shapefile, "sf")) {
-    states_shapefile <- st_as_sf(states_shapefile)
-  }
-  state_resistance_carbap$NAME<- state_resistance_carbap$State
-  # 3. Merge spatial data with resistance data by 'NAME'
-  states_merged <- merge(states_shapefile, state_resistance_carbap, by = "NAME", all.x = TRUE)
-  # 4. Convert merged data to 'Spatial' object for neighborhood creation
-  states_spatial <- as(states_merged, "Spatial")
-  # 5. Create unique geometries for neighborhood structure
-  states_spatial_unique <- states_spatial[!duplicated(states_spatial$GEOID), ]
-  # 6. Remove Hawaii (GEOID "15") and Alaska (GEOID "02") from the spatial data
-  states_spatial_filtered <- states_spatial[!states_spatial$GEOID %in% c("15", "02"), ]
-  # 7. Convert to 'Spatial' object if necessary
-  if (!inherits(states_spatial_filtered, "Spatial")) {
-    states_spatial_filtered <- as(states_spatial_filtered, "Spatial")
-  }
-  # 8. Remove duplicates based on GEOID to create unique state geometries for neighborhood structure
-  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
-  # 9. Recreate the neighborhood structure using unique state geometries
-  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
-  # 10. Assign region names to the neighborhood list
-  names(nb) <- states_spatial_unique$GEOID
-  print(nb)
-  # 11. Clean and ensure data alignment with neighborhood structure
-  # Convert 'GEOID' to factor and ensure levels match the neighborhood structure
-  states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
-  # Convert 'Resistance' to numeric
-  states_spatial_filtered@data$Resistance <- as.numeric(states_spatial_filtered@data$Resistance)
-  states_spatial_filtered@data$AMR_Positive <- as.numeric(states_spatial_filtered@data$AMR_Positive)
-  states_spatial_filtered@data$Total_Isolates <- as.numeric(states_spatial_filtered@data$Total_Isolates)
-  # Convert 'Year' to numeric and handle missing data
-  states_spatial_filtered@data$Year <- as.numeric(as.character(states_spatial_filtered@data$Year))
-  states_spatial_filtered@data <- states_spatial_filtered@data[complete.cases(states_spatial_filtered@data), ]
-  # 12. Recreate neighborhood structure using the cleaned and filtered data
-  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
-  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
-  names(nb) <- states_spatial_unique$GEOID
-  # 13. Set control parameters for GAM
-  ctrl <- gam.control(nthreads = 6)  # Set parallel threads for faster computation
-  # 14. Fit the MRF model with spatio-temporal smoothing
-  model_gamx1 <- gam(Resistance ~ 
-                       s(Year, m=3, k=10, bs = "tp") +   # Smooth term for Year
-                       s(GEOID, bs = 'mrf', xt = list(nb = nb)) +  # Smooth term for GEOID
-                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb))), # Interaction term
-                     data = states_spatial_filtered@data,
-                     family = binomial, 
-                     select = TRUE,
-                     method = "REML", 
-                     weights = Total_Isolates)
-  return(model_gamx1)
-}
-
-fit_gam_model_mdr <- function(state_resistance_carbap) {
-  # 1. Load Spatial Data and Resistance Data
-  states_shapefile <- states(cb = TRUE)
-  # 2. Convert 'states_shapefile' to 'sf' object if not already
-  if (!inherits(states_shapefile, "sf")) {
-    states_shapefile <- st_as_sf(states_shapefile)
-  }
-  state_resistance_carbap$NAME<- state_resistance_carbap$State
-  # 3. Merge spatial data with resistance data by 'NAME'
-  states_merged <- merge(states_shapefile, state_resistance_carbap, by = "NAME", all.x = TRUE)
-  # 4. Convert merged data to 'Spatial' object for neighborhood creation
-  states_spatial <- as(states_merged, "Spatial")
-  # 5. Create unique geometries for neighborhood structure
-  states_spatial_unique <- states_spatial[!duplicated(states_spatial$GEOID), ]
-  # 6. Remove Hawaii (GEOID "15") and Alaska (GEOID "02") from the spatial data
-  states_spatial_filtered <- states_spatial[!states_spatial$GEOID %in% c("15", "02"), ]
-  # 7. Convert to 'Spatial' object if necessary
-  if (!inherits(states_spatial_filtered, "Spatial")) {
-    states_spatial_filtered <- as(states_spatial_filtered, "Spatial")
-  }
-  # 8. Remove duplicates based on GEOID to create unique state geometries for neighborhood structure
-  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
-  # 9. Recreate the neighborhood structure using unique state geometries
-  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
-  # 10. Assign region names to the neighborhood list
-  names(nb) <- states_spatial_unique$GEOID
-  print(nb)
-  # 11. Clean and ensure data alignment with neighborhood structure
-  # Convert 'GEOID' to factor and ensure levels match the neighborhood structure
-  states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
-  # Convert 'Resistance' to numeric
-  states_spatial_filtered@data$MDR <- as.numeric(states_spatial_filtered@data$MDR)
-  states_spatial_filtered@data$MDR_Positive <- as.numeric(states_spatial_filtered@data$MDR_Positive)
-  states_spatial_filtered@data$Total_Isolates <- as.numeric(states_spatial_filtered@data$Total_Isolates)
-  # Convert 'Year' to numeric and handle missing data
-  states_spatial_filtered@data$Year <- as.numeric(as.character(states_spatial_filtered@data$Year))
-  states_spatial_filtered@data <- states_spatial_filtered@data[complete.cases(states_spatial_filtered@data), ]
-  # 12. Recreate neighborhood structure using the cleaned and filtered data
-  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
-  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
-  names(nb) <- states_spatial_unique$GEOID
-  # 13. Set control parameters for GAM
-  ctrl <- gam.control(nthreads = 6)  # Set parallel threads for faster computation
-  # 14. Fit the MRF model with spatio-temporal smoothing
-  model_gamx1 <- gam(MDR ~ 
-                       s(Year, m=3, k=10, bs = "tp") +   # Smooth term for Year
-                       s(GEOID, bs = 'mrf', xt = list(nb = nb)) +  # Smooth term for GEOID
-                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb))), # Interaction term
-                     data = states_spatial_filtered@data,
-                     family = binomial, 
-                     select = TRUE,
-                     method = "REML", 
-                     weights = Total_Isolates)
-  return(model_gamx1)
-}
-
-#OUTPUT OF THE RESULTS SPATIO-TEMPORAL MODELS:
-model_output_carbap <- fit_gam_model(state_resistance_carbap)
-model_output_cephalos <- fit_gam_model(state_resistance_cephalos)
-model_output_firstline <- fit_gam_model(state_resistance_firstline)
-model_output_mdr <-fit_gam_model_mdr(state_resistance_mdr)
-
-# Tidying model outputs
-extract_model_summary <- function(model) {
-  # Extracting smooth terms
-  smooth_summary <- tidy(model, parametric = FALSE)
-  
-  # Extracting parametric coefficients
-  parametric_summary <- tidy(model, exponentiate = FALSE, parametric = TRUE)
-  
-  # Combine both summaries
-  combined_summary <- bind_rows(parametric_summary, smooth_summary)
-  
-  return(combined_summary)
-}
-
-# Apply the function to each model
-summary_carbap <- extract_model_summary(model_output_carbap)
-summary_cephalos <- extract_model_summary(model_output_cephalos)
-summary_firstline <- extract_model_summary(model_output_firstline)
-summary_mdr <- extract_model_summary(model_output_mdr)
-
-# Adding model identifiers
-summary_carbap$model <- "Carbapenem Resistance"
-summary_cephalos$model <- "Cephalosporin Resistance"
-summary_firstline$model <- "First-line Antibiotic Resistance"
-summary_mdr$model <- "MDR Resistance"
-
-# Combining all summaries into one dataframe
-combined_results <- bind_rows(summary_carbap, summary_cephalos, summary_firstline, summary_mdr)
-
-# Optionally, select and rename columns for clarity
-final_results <- combined_results %>%
-  dplyr::select(Model = model, Term = term, Estimate = estimate, EDF = edf, Ref.DF = ref.df, Std.Error = std.error,
-                Statistic = statistic, `P.Value` = p.value)
-#####
-
-#-------------------------------------------#
-###FIRST DERIVATIVE GRAPHS, US states:
-#-------------------------------------------#
-
-#NEW, CARBAPENEM RESISTANCE GRAPH: ######
-model_output_carbap <- fit_gam_model(state_resistance_carbap)
-final_dataset<- model.frame(model_output_carbap)
-original_geo_levels <- levels(final_dataset$GEOID)
-
-years_range <- seq(min(state_resistance_carbap$Year), max(state_resistance_carbap$Year), length.out = 100)
-# Create prediction data
-new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
-new_data$Year <- as.numeric(as.character(new_data$Year))  # Ensure Year is nume
-
-# Compute predictions and derivatives
-preds <- predict(model_output_carbap, newdata = new_data, type = "terms", se.fit = TRUE, deriv = 1)
-
-# Assuming you have already generated `preds` as before
-# Now, include the interaction term in the derivative calculation
-new_data$Year_deriv <- preds$fit[, "s(Year)"] + preds$fit[, "te(Year,GEOID)"]
-
-# Calculate confidence intervals including both main and interaction effects
-new_data$SE <- sqrt(preds$se.fit[, "s(Year)"]^2 + preds$se.fit[, "te(Year,GEOID)"]^2)
-
-# Using a normal approximation for the confidence interval
-alpha <- 0.05
-z_score <- qnorm(1 - alpha / 2)
-new_data$lower_ci <- new_data$Year_deriv - z_score * new_data$SE
-new_data$upper_ci <- new_data$Year_deriv + z_score * new_data$SE
-
-# Convert Spatial*DataFrame to a regular data frame for easier manipulation
-states_data_df <- as.data.frame(states_spatial_filtered)
-
-# Ensure GEOID is factor in both data frames for correct merging
-new_data$GEOID <- as.factor(new_data$GEOID)
-states_data_df$GEOID <- as.factor(states_data_df$GEOID)
-
-# Merge to append the NAME corresponding to each GEOID
-new_data <- merge(new_data, states_data_df[, c("GEOID", "NAME")], by = "GEOID", all.x = TRUE)
-
-# Calculate zero crossing: Check if zero is inside or outside the interval
-new_data <- new_data %>%
-  mutate(
-    zero_in_prev = ifelse(lag(lower_ci) <= 0 & lag(upper_ci) >= 0, 1, 0),
-    zero_in_curr = ifelse(lower_ci <= 0 & upper_ci >= 0, 1, 0),
-    sign_change = zero_in_prev != zero_in_curr  # Change in zero inclusion status
-  )
-
-# Filter crossings that happen after the year 2004
-crossing_points <- new_data %>%
-  filter(sign_change, Year > 2004) %>%
-  dplyr::select(NAME, Year) %>%
-  distinct(NAME, Year)  # Ensure unique crossing points
-
-# Define the Lancet style theme
-lancet_theme <- theme_minimal() +
-  theme(text = element_text(family = "sans", color = "black"),
-        plot.title = element_text(size = 11, face = "bold", hjust = 0.5),
-        axis.text = element_text(size = 7),
-        axis.title = element_text(size = 7, face = "bold"),
-        legend.position = "none",  # Remove legend
-        strip.text.x = element_text(size = 7))
-
-# Plotting with NAME as labels and Lancet style, including multiple crossing points
-p <- ggplot(new_data, aes(x = Year, y = Year_deriv, group = NAME, color = NAME)) +
-  geom_line() +
-  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = NAME), alpha = 0.2) +
-  geom_vline(data = crossing_points, aes(xintercept = Year), color = "red", linetype = "dashed", size = 1) +
-  facet_wrap(~NAME, scales = "free_y") +
-  lancet_theme +
-  labs(title = "",
-       x = "Year",
-       y = "Rate of change (first derivative from spatio-temporal GAM model)")
-#First Derivative of Year by State in Carbapenem Resistance Model
-ggsave(filename = "p_state_resistance_carbap.tiff", plot = p, device = "tiff", path = base_pathOut,
-       width = 11, height = 7, dpi = 500, units = "in")
-######
-
-#NEW, CEPHALOSPORIN RESISTANCE GRAPH: ######
-model_output_cephalos <- fit_gam_model(state_resistance_cephalos)
-final_dataset<- model.frame(model_output_cephalos)
-original_geo_levels <- levels(final_dataset$GEOID)
-
-years_range <- seq(min(state_resistance_cephalos$Year), max(state_resistance_cephalos$Year), length.out = 100)
-# Create prediction data
-new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
-new_data$Year <- as.numeric(as.character(new_data$Year))  # Ensure Year is nume
-
-# Compute predictions and derivatives
-preds <- predict(model_output_cephalos, newdata = new_data, type = "terms", se.fit = TRUE, deriv = 1)
-
-# Assuming you have already generated `preds` as before
-# Now, include the interaction term in the derivative calculation
-new_data$Year_deriv <- preds$fit[, "s(Year)"] + preds$fit[, "te(Year,GEOID)"]
-
-# Calculate confidence intervals including both main and interaction effects
-new_data$SE <- sqrt(preds$se.fit[, "s(Year)"]^2 + preds$se.fit[, "te(Year,GEOID)"]^2)
-
-# Using a normal approximation for the confidence interval
-alpha <- 0.05
-z_score <- qnorm(1 - alpha / 2)
-new_data$lower_ci <- new_data$Year_deriv - z_score * new_data$SE
-new_data$upper_ci <- new_data$Year_deriv + z_score * new_data$SE
-
-# Convert Spatial*DataFrame to a regular data frame for easier manipulation
-states_data_df <- as.data.frame(states_spatial_filtered)
-
-# Ensure GEOID is factor in both data frames for correct merging
-new_data$GEOID <- as.factor(new_data$GEOID)
-states_data_df$GEOID <- as.factor(states_data_df$GEOID)
-
-# Merge to append the NAME corresponding to each GEOID
-new_data <- merge(new_data, states_data_df[, c("GEOID", "NAME")], by = "GEOID", all.x = TRUE)
-
-# Calculate zero crossing: Check if zero is inside or outside the interval
-new_data <- new_data %>%
-  mutate(
-    zero_in_prev = ifelse(lag(lower_ci) <= 0 & lag(upper_ci) >= 0, 1, 0),
-    zero_in_curr = ifelse(lower_ci <= 0 & upper_ci >= 0, 1, 0),
-    sign_change = zero_in_prev != zero_in_curr  # Change in zero inclusion status
-  )
-
-# Filter crossings that happen after the year 2004
-crossing_points <- new_data %>%
-  filter(sign_change, Year > 2004) %>%
-  dplyr::select(NAME, Year) %>%
-  distinct(NAME, Year)  # Ensure unique crossing points
-
-# Define the Lancet style theme
-lancet_theme <- theme_minimal() +
-  theme(text = element_text(family = "sans", color = "black"),
-        plot.title = element_text(size = 11, face = "bold", hjust = 0.5),
-        axis.text = element_text(size = 7),
-        axis.title = element_text(size = 7, face = "bold"),
-        legend.position = "none",  # Remove legend
-        strip.text.x = element_text(size = 7))
-
-# Plotting with NAME as labels and Lancet style, including multiple crossing points
-p <- ggplot(new_data, aes(x = Year, y = Year_deriv, group = NAME, color = NAME)) +
-  geom_line() +
-  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = NAME), alpha = 0.2) +
-  geom_vline(data = crossing_points, aes(xintercept = Year), color = "red", linetype = "dashed", size = 1) +
-  facet_wrap(~NAME, scales = "free_y") +
-  lancet_theme +
-  labs(title = "",
-       x = "Year",
-       y = "Rate of change (first derivative from spatio-temporal GAM model)")
-#First Derivative of Year by State in Carbapenem Resistance Model
-ggsave(filename = "p_state_resistance_cephalos.tiff", plot = p, device = "tiff", path = base_pathOut,
-       width = 11, height = 7, dpi = 500, units = "in")
-######
-
-#NEW, FIRST-LINE RESISTANCE GRAPH: ######
-model_output_firstline <- fit_gam_model(state_resistance_firstline)
-final_dataset<- model.frame(model_output_firstline)
-original_geo_levels <- levels(final_dataset$GEOID)
-
-state_resistance_firstline$Year <- as.numeric(as.character(state_resistance_firstline$Year))
-years_range <- seq(min(state_resistance_firstline$Year), max(state_resistance_firstline$Year), length.out = 100)
-# Create prediction data
-new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
-new_data$Year <- as.numeric(as.character(new_data$Year))  # Ensure Year is nume
-
-# Compute predictions and derivatives
-preds <- predict(model_output_firstline, newdata = new_data, type = "terms", se.fit = TRUE, deriv = 1)
-
-# Assuming you have already generated `preds` as before
-# Now, include the interaction term in the derivative calculation
-new_data$Year_deriv <- preds$fit[, "s(Year)"] + preds$fit[, "te(Year,GEOID)"]
-
-# Calculate confidence intervals including both main and interaction effects
-new_data$SE <- sqrt(preds$se.fit[, "s(Year)"]^2 + preds$se.fit[, "te(Year,GEOID)"]^2)
-
-# Using a normal approximation for the confidence interval
-alpha <- 0.05
-z_score <- qnorm(1 - alpha / 2)
-new_data$lower_ci <- new_data$Year_deriv - z_score * new_data$SE
-new_data$upper_ci <- new_data$Year_deriv + z_score * new_data$SE
-
-# Convert Spatial*DataFrame to a regular data frame for easier manipulation
-states_data_df <- as.data.frame(states_spatial_filtered)
-
-# Ensure GEOID is factor in both data frames for correct merging
-new_data$GEOID <- as.factor(new_data$GEOID)
-states_data_df$GEOID <- as.factor(states_data_df$GEOID)
-
-# Merge to append the NAME corresponding to each GEOID
-new_data <- merge(new_data, states_data_df[, c("GEOID", "NAME")], by = "GEOID", all.x = TRUE)
-
-# Calculate zero crossing: Check if zero is inside or outside the interval
-new_data <- new_data %>%
-  mutate(
-    zero_in_prev = ifelse(lag(lower_ci) <= 0 & lag(upper_ci) >= 0, 1, 0),
-    zero_in_curr = ifelse(lower_ci <= 0 & upper_ci >= 0, 1, 0),
-    sign_change = zero_in_prev != zero_in_curr  # Change in zero inclusion status
-  )
-
-# Filter crossings that happen after the year 2004
-crossing_points <- new_data %>%
-  filter(sign_change, Year > 2004) %>%
-  dplyr::select(NAME, Year) %>%
-  distinct(NAME, Year)  # Ensure unique crossing points
-
-# Define the Lancet style theme
-lancet_theme <- theme_minimal() +
-  theme(text = element_text(family = "sans", color = "black"),
-        plot.title = element_text(size = 11, face = "bold", hjust = 0.5),
-        axis.text = element_text(size = 7),
-        axis.title = element_text(size = 7, face = "bold"),
-        legend.position = "none",  # Remove legend
-        strip.text.x = element_text(size = 7))
-
-# Plotting with NAME as labels and Lancet style, including multiple crossing points
-p <- ggplot(new_data, aes(x = Year, y = Year_deriv, group = NAME, color = NAME)) +
-  geom_line() +
-  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = NAME), alpha = 0.2) +
-  geom_vline(data = crossing_points, aes(xintercept = Year), color = "red", linetype = "dashed", size = 1) +
-  facet_wrap(~NAME, scales = "free_y") +
-  lancet_theme +
-  labs(title = "",
-       x = "Year",
-       y = "Rate of change (first derivative from spatio-temporal GAM model)")
-#First Derivative of Year by State in Carbapenem Resistance Model
-ggsave(filename = "p_state_resistance_firstline.tiff", plot = p, device = "tiff", path = base_pathOut,
-       width = 11, height = 7, dpi = 500, units = "in")
-######
-
-
-#NEW, MDR RESISTANCE GRAPH: ######
-model_output_mdr <- fit_gam_model_mdr(state_resistance_mdr)
-final_dataset<- model.frame(model_output_mdr)
-original_geo_levels <- levels(final_dataset$GEOID)
-
-state_resistance_mdr$Year <- as.numeric(as.character(state_resistance_mdr$Year))
-years_range <- seq(min(state_resistance_mdr$Year), max(state_resistance_mdr$Year), length.out = 100)
-# Create prediction data
-new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
-new_data$Year <- as.numeric(as.character(new_data$Year))  # Ensure Year is nume
-
-# Compute predictions and derivatives
-preds <- predict(model_output_mdr, newdata = new_data, type = "terms", se.fit = TRUE, deriv = 1)
-
-# Assuming you have already generated `preds` as before
-# Now, include the interaction term in the derivative calculation
-new_data$Year_deriv <- preds$fit[, "s(Year)"] + preds$fit[, "te(Year,GEOID)"]
-
-# Calculate confidence intervals including both main and interaction effects
-new_data$SE <- sqrt(preds$se.fit[, "s(Year)"]^2 + preds$se.fit[, "te(Year,GEOID)"]^2)
-
-# Using a normal approximation for the confidence interval
-alpha <- 0.05
-z_score <- qnorm(1 - alpha / 2)
-new_data$lower_ci <- new_data$Year_deriv - z_score * new_data$SE
-new_data$upper_ci <- new_data$Year_deriv + z_score * new_data$SE
-
-# Convert Spatial*DataFrame to a regular data frame for easier manipulation
-states_data_df <- as.data.frame(states_spatial_filtered)
-
-# Ensure GEOID is factor in both data frames for correct merging
-new_data$GEOID <- as.factor(new_data$GEOID)
-states_data_df$GEOID <- as.factor(states_data_df$GEOID)
-
-# Merge to append the NAME corresponding to each GEOID
-new_data <- merge(new_data, states_data_df[, c("GEOID", "NAME")], by = "GEOID", all.x = TRUE)
-
-# Calculate zero crossing: Check if zero is inside or outside the interval
-new_data <- new_data %>%
-  mutate(
-    zero_in_prev = ifelse(lag(lower_ci) <= 0 & lag(upper_ci) >= 0, 1, 0),
-    zero_in_curr = ifelse(lower_ci <= 0 & upper_ci >= 0, 1, 0),
-    sign_change = zero_in_prev != zero_in_curr  # Change in zero inclusion status
-  )
-
-# Filter crossings that happen after the year 2004
-crossing_points <- new_data %>%
-  filter(sign_change, Year > 2004) %>%
-  dplyr::select(NAME, Year) %>%
-  distinct(NAME, Year)  # Ensure unique crossing points
-
-# Define the Lancet style theme
-lancet_theme <- theme_minimal() +
-  theme(text = element_text(family = "sans", color = "black"),
-        plot.title = element_text(size = 11, face = "bold", hjust = 0.5),
-        axis.text = element_text(size = 7),
-        axis.title = element_text(size = 7, face = "bold"),
-        legend.position = "none",  # Remove legend
-        strip.text.x = element_text(size = 7))
-
-# Plotting with NAME as labels and Lancet style, including multiple crossing points
-p <- ggplot(new_data, aes(x = Year, y = Year_deriv, group = NAME, color = NAME)) +
-  geom_line() +
-  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = NAME), alpha = 0.2) +
-  geom_vline(data = crossing_points, aes(xintercept = Year), color = "red", linetype = "dashed", size = 1) +
-  facet_wrap(~NAME, scales = "free_y") +
-  lancet_theme +
-  labs(title = "",
-       x = "Year",
-       y = "Rate of change (first derivative from spatio-temporal GAM model)")
-#First Derivative of Year by State in Carbapenem Resistance Model
-ggsave(filename = "p_state_resistance_mdr.tiff", plot = p, device = "tiff", path = base_pathOut,
-       width = 11, height = 7, dpi = 500, units = "in")
-######
-
-
-#-------------------------------------------#
-###SUBGROUP ANALYSES, US states:
-#-------------------------------------------#
-
-
-
-
-#------------------------------------------------------------------------------------------------------#
-#------------------------------------------------------------------------------------------------------#
-#------------------------------------------------------------------------------------------------------#
-#------------------------------------------------------------------------------------------------------#
-#------------------------------------------------------------------------------------------------------#
-# Analyses for EUROPE
-#------------------------------------------------------------------------------------------------------#
-#------------------------------------------------------------------------------------------------------#
-#------------------------------------------------------------------------------------------------------#
-#------------------------------------------------------------------------------------------------------#
-#------------------------------------------------------------------------------------------------------#
-#country_resistance_carbap_eu country_resistance_cephalos_eu country_resistance_firstline_eu country_resistance_mdr_eu
-
-#------------------------------------------------------------------------------------------------------#
-# Analyses for Europe GAM SPATIOTEMPORAL 
-#------------------------------------------------------------------------------------------------------#
-######
-# Load Spatial Data and Resistance Data
-k=6
-fit_gam_model_eu <- function(state_resistance_carbap) {
-  europe_shapefile <- ne_countries(continent = "Europe", returnclass = "sf")
-  europe_shapefile <- st_make_valid(europe_shapefile)
-  # Rename and modify sovereignt to NAME
-  europe_shapefile <- mutate(europe_shapefile, NAME = sovereignt)
-  europe_shapefile <- mutate(europe_shapefile,
-                             NAME = case_when(
-                               NAME == "Slovakia" ~ "Slovak Republic",
-                               NAME == "Republic of Serbia" ~ "Serbia",
-                               NAME == "Czechia" ~ "Czech Republic",
-                               TRUE ~ NAME
-                             ))
-  
-  # Ensure all geometries are valid
-  states_shapefile<-europe_shapefile
-  state_resistance_carbap$NAME<- state_resistance_carbap$Country
-  state_resistance_carbap <- state_resistance_carbap %>%
-    filter(NAME != "Turkey") 
-    # Merge spatial data with resistance data by 'NAME'
-  states_merged <- merge(states_shapefile, state_resistance_carbap, by = "NAME", all.x = TRUE)
-  
-  # Create unique geometries for neighborhood structure
-  states_spatial_unique <- states_merged[!duplicated(states_merged$NAME), ]
-  #states_spatial_unique$GEOID <- as.numeric(factor(states_spatial_unique$NAME))
-  
-  # Merge to append the GEOID corresponding to each NAME
-  #states_spatial <- st_join(states_merged, states_spatial_unique[, c("NAME", "GEOID")])
-  #states_spatial <- states_spatial %>%
-  #  rename(NAME = NAME.x) %>%
-  #  dplyr::select(-NAME.y)
-  # Remove countries not included in countries_list_eu_includ
-  states_spatial_filtered <- states_merged %>%
-    dplyr::filter(NAME %in% countries_list_eu_includ)
-  
-  states_spatial_filtered <- states_spatial_filtered %>%
-    mutate(
-      GEOID = as.numeric(factor(NAME, levels = unique(NAME)))
-    )
-  
-  if (!inherits(states_spatial_filtered, "Spatial")) {
-    states_spatial_filtered <- as(states_spatial_filtered, "Spatial")
-  }
-  
-  
-  # 8. Remove duplicates based on GEOID to create unique state geometries for neighborhood structure
-  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
-  # 9. Recreate the neighborhood structure using unique state geometries
-  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
-  # 10. Assign region names to the neighborhood list
-  names(nb) <- states_spatial_unique$GEOID
-  
-  # Clean and ensure data alignment with neighborhood structure
-  states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
-  states_spatial_filtered@data$Resistance <- as.numeric(states_spatial_filtered@data$Resistance)
-  states_spatial_filtered@data$AMR_Positive <- as.numeric(states_spatial_filtered@data$AMR_Positive)
-  states_spatial_filtered@data$Total_Isolates <- as.numeric(states_spatial_filtered@data$Total_Isolates)
-  states_spatial_filtered@data$Year <- as.numeric(as.character(states_spatial_filtered@data$Year))
-  #states_spatial_filtered@data <- states_spatial_filtered@data[complete.cases(states_spatial_filtered@data), ]
-  
-  # Set control parameters for GAM
-  ctrl <- gam.control(nthreads = 6)  # Set parallel threads for faster computation
-  
-  # Fit the MRF model with spatio-temporal smoothing
-  model_gamx1 <- gam(Resistance ~ 
-                       s(Year, m=3, k=k, bs = "tp") +
-                       s(GEOID, bs = 'mrf', xt = list(nb = nb)) +
-                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb))),
-                     data = states_spatial_filtered@data,
-                     family = binomial, 
-                     select = TRUE,
-                     method = "REML", 
-                     weights = Total_Isolates)
-  return(list(fr=model_gamx1, states_spatial_filtered=states_spatial_filtered))
-}
-fit_gam_model_mdr_eu <- function(state_resistance_carbap) {
-  # Load Spatial Data and Resistance Data
-  europe_shapefile <- ne_countries(continent = "Europe", returnclass = "sf")
-  europe_shapefile <- st_make_valid(europe_shapefile)
-  # Rename and modify sovereignt to NAME
-  europe_shapefile <- mutate(europe_shapefile, NAME = sovereignt)
-  europe_shapefile <- mutate(europe_shapefile,
-                             NAME = case_when(
-                               NAME == "Slovakia" ~ "Slovak Republic",
-                               NAME == "Republic of Serbia" ~ "Serbia",
-                               NAME == "Czechia" ~ "Czech Republic",
-                               TRUE ~ NAME
-                             ))
-  
-  # Ensure all geometries are valid
-  states_shapefile<-europe_shapefile
-  state_resistance_carbap$NAME<- state_resistance_carbap$Country
-  state_resistance_carbap <- state_resistance_carbap %>%
-    filter(NAME != "Turkey") 
-  # Merge spatial data with resistance data by 'NAME'
-  states_merged <- merge(states_shapefile, state_resistance_carbap, by = "NAME", all.x = TRUE)
-  
-  # Create unique geometries for neighborhood structure
-  states_spatial_unique <- states_merged[!duplicated(states_merged$NAME), ]
-  #states_spatial_unique$GEOID <- as.numeric(factor(states_spatial_unique$NAME))
-  
-  # Merge to append the GEOID corresponding to each NAME
-  #states_spatial <- st_join(states_merged, states_spatial_unique[, c("NAME", "GEOID")])
-  #states_spatial <- states_spatial %>%
-  #  rename(NAME = NAME.x) %>%
-  #  dplyr::select(-NAME.y)
-  # Remove countries not included in countries_list_eu_includ
-  countries_list_eu_includ <- c(
-    "Austria", "Belgium", "Bulgaria", "Croatia", "Czech Republic",
-    "Denmark","Finland", "France", "Germany",
-    "Greece", "Hungary", "Ireland", "Italy", "Latvia",
-    "Lithuania", "Netherlands", "Poland", "Portugal",
-    "Romania", "Russia", "Slovak Republic", "Slovenia",
-    "Spain", "Sweden", "Switzerland", "Ukraine",
-    "United Kingdom"
-  )
-  countries_list_eu_includ <- c(
-    "Austria", "Belgium", "Croatia", "Czech Republic",
-    "Denmark", "Finland", "France", "Germany",
-    "Greece", "Hungary", "Ireland", "Italy", "Latvia",
-    "Lithuania", "Netherlands", "Poland", "Portugal",
-    "Romania",  "Slovak Republic", "Slovenia",
-    "Spain", "Sweden", "Switzerland",
-    "United Kingdom"
-  )
-  states_spatial_filtered <- states_merged %>%
-    dplyr::filter(NAME %in% countries_list_eu_includ)
-  
-  states_spatial_filtered <- states_spatial_filtered %>%
-    mutate(
-      GEOID = as.numeric(factor(NAME, levels = unique(NAME)))
-    )
-  
-  if (!inherits(states_spatial_filtered, "Spatial")) {
-    states_spatial_filtered <- as(states_spatial_filtered, "Spatial")
-  }
-  
-  
-  # 8. Remove duplicates based on GEOID to create unique state geometries for neighborhood structure
-  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
-  # 9. Recreate the neighborhood structure using unique state geometries
-  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
-  # 10. Assign region names to the neighborhood list
-  names(nb) <- states_spatial_unique$GEOID
-
-  # 11. Clean and ensure data alignment with neighborhood structure
-  # Convert 'GEOID' to factor and ensure levels match the neighborhood structure
-  states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
-  # Convert 'Resistance' to numeric
-  states_spatial_filtered@data$MDR <- as.numeric(states_spatial_filtered@data$MDR)
-  states_spatial_filtered@data$MDR_Positive <- as.numeric(states_spatial_filtered@data$MDR_Positive)
-  states_spatial_filtered@data$Total_Isolates <- as.numeric(states_spatial_filtered@data$Total_Isolates)
-  # Convert 'Year' to numeric and handle missing data
-  states_spatial_filtered@data$Year <- as.numeric(as.character(states_spatial_filtered@data$Year))
-  # 12. Recreate neighborhood structure using the cleaned and filtered data
-  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
-  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
-  names(nb) <- states_spatial_unique$GEOID
-  
-  # 13. Set control parameters for GAM
-  ctrl <- gam.control(nthreads = 6)  # Set parallel threads for faster computation
-  # 14. Fit the MRF model with spatio-temporal smoothing
-  model_gamx1 <- gam(MDR ~ 
-                       s(Year, m=3, k=k, bs = "tp") +   # Smooth term for Year
-                       s(GEOID, bs = 'mrf', xt = list(nb = nb)) +  # Smooth term for GEOID
-                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb))), # Interaction term
-                     data = states_spatial_filtered@data,
-                     family = binomial, 
-                     select = TRUE,
-                     method = "REML", 
-                     weights = Total_Isolates)
-  return(list(sf=model_gamx1,  states_spatial_filtered= states_spatial_filtered))
-}
-
-#OUTPUT OF THE RESULTS SPATIO-TEMPORAL MODELS:
-model_output_carbap_eu <- fit_gam_model_eu(country_resistance_carbap_eu)
-model_output_carbap_eu <- model_output_carbap_eu$fr
-model_output_cephalos_eu <- fit_gam_model_eu(country_resistance_cephalos_eu)
-model_output_cephalos_eu<- model_output_cephalos_eu$fr
-model_output_firstline_eu <- fit_gam_model_eu(country_resistance_firstline_eu)
-model_output_firstline_eu<- model_output_firstline_eu$fr
-model_output_mdr_eu <-fit_gam_model_mdr_eu(country_resistance_mdr_eu)
-model_output_mdr_eu <- model_output_mdr_eu$sf
-
-# Tidying model outputs
-extract_model_summary_eu <- function(model) {
-  # Extracting smooth terms
-  smooth_summary <- tidy(model, parametric = FALSE)
-  
-  # Extracting parametric coefficients
-  parametric_summary <- tidy(model, exponentiate = FALSE, parametric = TRUE)
-  
-  # Combine both summaries
-  combined_summary <- bind_rows(parametric_summary, smooth_summary)
-  
-  return(combined_summary)
-}
-
-# Apply the function to each model
-summary_carbap_eu <- extract_model_summary_eu(model_output_carbap_eu)
-summary_cephalos_eu <- extract_model_summary_eu(model_output_cephalos_eu)
-summary_firstline_eu <- extract_model_summary_eu(model_output_firstline_eu)
-summary_mdr_eu <- extract_model_summary_eu(model_output_mdr_eu)
-
-# Adding model identifiers
-summary_carbap_eu$model <- "Carbapenem Resistance"
-summary_cephalos_eu$model <- "Cephalosporin Resistance"
-summary_firstline_eu$model <- "First-line Antibiotic Resistance"
-summary_mdr_eu$model <- "MDR Resistance"
-# Combining all summaries into one dataframe
-combined_results_eu <- bind_rows(summary_carbap_eu, summary_cephalos_eu, summary_firstline_eu, summary_mdr_eu)
-# Optionally, select and rename columns for clarity
-final_results_eu <- combined_results_eu %>%
-  dplyr::select(Model = model, Term = term, Estimate = estimate, EDF = edf, Ref.DF = ref.df, Std.Error = std.error,
-                Statistic = statistic, `P.Value` = p.value)
-
-######
-
-
-#-------------------------------------------------------------------------#
-###FIRST/SECOND-derivative & GROWTH rate/DOUBLING/HALVING GRAPHS, Europe:
-#-------------------------------------------------------------------------#
+#-------------------------------------------------#
 #FUNCTIONS for final plots///
 # - - - - - -#
 gam_predictions <- function(gam_model, newdata) {
@@ -3382,9 +2815,2953 @@ derivatives_mh2 <- function(gam_model, newdata, startpoint = 0) {
   
   return(results)
 }
+#-------------------------------------------------#
 
-# - - - - - -#
 
+#------------------------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------------------------#
+# Analyses for the US states GAM SPATIOTEMPORAL 
+#------------------------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------------------------#
+######
+#STATE INFO US:  state_resistance_carbap state_resistance_cephalos state_resistance_firstline state_resistance_mdr.   ///#COUNTRY INFO:  country_resistance_carbap country_resistance_cephalos country_resistance_firstline  country_resistance_mdr 
+k=6
+fit_gam_model <- function(state_resistance_carbap) {
+  # 1. Load Spatial Data and Resistance Data
+  states_shapefile <- states(cb = TRUE)
+  # 2. Convert 'states_shapefile' to 'sf' object if not already
+  if (!inherits(states_shapefile, "sf")) {
+    states_shapefile <- st_as_sf(states_shapefile)
+  }
+  state_resistance_carbap$NAME<- state_resistance_carbap$State
+  # 3. Merge spatial data with resistance data by 'NAME'
+  states_merged <- merge(states_shapefile, state_resistance_carbap, by = "NAME", all.x = TRUE)
+  # 4. Convert merged data to 'Spatial' object for neighborhood creation
+  states_spatial <- as(states_merged, "Spatial")
+  # 5. Create unique geometries for neighborhood structure
+  states_spatial_unique <- states_spatial[!duplicated(states_spatial$GEOID), ]
+  # 6. Remove Hawaii (GEOID "15") and Alaska (GEOID "02") from the spatial data
+  states_spatial_filtered <- states_spatial[!states_spatial$GEOID %in% c("15", "02"), ]
+  # 7. Convert to 'Spatial' object if necessary
+  if (!inherits(states_spatial_filtered, "Spatial")) {
+    states_spatial_filtered <- as(states_spatial_filtered, "Spatial")
+  }
+  # 8. Remove duplicates based on GEOID to create unique state geometries for neighborhood structure
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  # 9. Recreate the neighborhood structure using unique state geometries
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  # 10. Assign region names to the neighborhood list
+  names(nb) <- states_spatial_unique$GEOID
+  print(nb)
+  # 11. Clean and ensure data alignment with neighborhood structure
+  # Convert 'GEOID' to factor and ensure levels match the neighborhood structure
+  states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
+  # Convert 'Resistance' to numeric
+  states_spatial_filtered@data$Resistance <- as.numeric(states_spatial_filtered@data$Resistance)
+  states_spatial_filtered@data$AMR_Positive <- as.numeric(states_spatial_filtered@data$AMR_Positive)
+  states_spatial_filtered@data$Total_Isolates <- as.numeric(states_spatial_filtered@data$Total_Isolates)
+  # Convert 'Year' to numeric and handle missing data
+  states_spatial_filtered@data$Year <- as.numeric(as.character(states_spatial_filtered@data$Year))
+  states_spatial_filtered@data <- states_spatial_filtered@data[complete.cases(states_spatial_filtered@data), ]
+  # 12. Recreate neighborhood structure using the cleaned and filtered data
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  names(nb) <- states_spatial_unique$GEOID
+  # 13. Set control parameters for GAM
+  ctrl <- gam.control(nthreads = 6)  # Set parallel threads for faster computation
+  # 14. Fit the MRF model with spatio-temporal smoothing
+  model_gamx1 <- gam(Resistance ~ 
+                       s(Year, m=3, k=k, bs = "tp") +   # Smooth term for Year
+                       s(GEOID, bs = 'mrf', xt = list(nb = nb)) +  # Smooth term for GEOID
+                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb))), # Interaction term
+                     data = states_spatial_filtered@data,
+                     family = binomial, 
+                     select = TRUE,
+                     method = "REML", 
+                     weights = Total_Isolates)
+  
+  
+  return(list(fr=model_gamx1, states_spatial_filtered=states_spatial_filtered))
+}
+fit_gam_model_mdr <- function(state_resistance_carbap) {
+  # 1. Load Spatial Data and Resistance Data
+  states_shapefile <- states(cb = TRUE)
+  # 2. Convert 'states_shapefile' to 'sf' object if not already
+  if (!inherits(states_shapefile, "sf")) {
+    states_shapefile <- st_as_sf(states_shapefile)
+  }
+  state_resistance_carbap$NAME<- state_resistance_carbap$State
+  # 3. Merge spatial data with resistance data by 'NAME'
+  states_merged <- merge(states_shapefile, state_resistance_carbap, by = "NAME", all.x = TRUE)
+  # 4. Convert merged data to 'Spatial' object for neighborhood creation
+  states_spatial <- as(states_merged, "Spatial")
+  # 5. Create unique geometries for neighborhood structure
+  states_spatial_unique <- states_spatial[!duplicated(states_spatial$GEOID), ]
+  # 6. Remove Hawaii (GEOID "15") and Alaska (GEOID "02") from the spatial data
+  states_spatial_filtered <- states_spatial[!states_spatial$GEOID %in% c("15", "02"), ]
+  # 7. Convert to 'Spatial' object if necessary
+  if (!inherits(states_spatial_filtered, "Spatial")) {
+    states_spatial_filtered <- as(states_spatial_filtered, "Spatial")
+  }
+  # 8. Remove duplicates based on GEOID to create unique state geometries for neighborhood structure
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  # 9. Recreate the neighborhood structure using unique state geometries
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  # 10. Assign region names to the neighborhood list
+  names(nb) <- states_spatial_unique$GEOID
+  print(nb)
+  # 11. Clean and ensure data alignment with neighborhood structure
+  # Convert 'GEOID' to factor and ensure levels match the neighborhood structure
+  states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
+  # Convert 'Resistance' to numeric
+  states_spatial_filtered@data$MDR <- as.numeric(states_spatial_filtered@data$MDR)
+  states_spatial_filtered@data$MDR_Positive <- as.numeric(states_spatial_filtered@data$MDR_Positive)
+  states_spatial_filtered@data$Total_Isolates <- as.numeric(states_spatial_filtered@data$Total_Isolates)
+  # Convert 'Year' to numeric and handle missing data
+  states_spatial_filtered@data$Year <- as.numeric(as.character(states_spatial_filtered@data$Year))
+  states_spatial_filtered@data <- states_spatial_filtered@data[complete.cases(states_spatial_filtered@data), ]
+  # 12. Recreate neighborhood structure using the cleaned and filtered data
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  names(nb) <- states_spatial_unique$GEOID
+  # 13. Set control parameters for GAM
+  ctrl <- gam.control(nthreads = 6)  # Set parallel threads for faster computation
+  # 14. Fit the MRF model with spatio-temporal smoothing
+  model_gamx1 <- gam(MDR ~ 
+                       s(Year, m=3, k=k, bs = "tp") +   # Smooth term for Year
+                       s(GEOID, bs = 'mrf', xt = list(nb = nb)) +  # Smooth term for GEOID
+                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb))), # Interaction term
+                     data = states_spatial_filtered@data,
+                     family = binomial, 
+                     select = TRUE,
+                     method = "REML", 
+                     weights = Total_Isolates)
+  return(list(sf=model_gamx1,  states_spatial_filtered= states_spatial_filtered))
+}
+
+#OUTPUT OF THE RESULTS SPATIO-TEMPORAL MODELS:
+model_output_carbap <- fit_gam_model(state_resistance_carbap)
+model_output_carbap <- model_output_carbap$fr
+model_output_cephalos <- fit_gam_model(state_resistance_cephalos)
+model_output_cephalos <- model_output_cephalos$fr
+model_output_firstline <- fit_gam_model(state_resistance_firstline)
+model_output_firstline <- model_output_firstline$fr
+model_output_mdr <-fit_gam_model_mdr(state_resistance_mdr)
+model_output_mdr <- model_output_mdr$sf
+
+# Tidying model outputs
+extract_model_summary <- function(model) {
+  # Extracting smooth terms
+  smooth_summary <- tidy(model, parametric = FALSE)
+  
+  # Extracting parametric coefficients
+  parametric_summary <- tidy(model, exponentiate = FALSE, parametric = TRUE)
+  
+  # Combine both summaries
+  combined_summary <- bind_rows(parametric_summary, smooth_summary)
+  
+  return(combined_summary)
+}
+
+# Apply the function to each model
+summary_carbap <- extract_model_summary(model_output_carbap)
+summary_cephalos <- extract_model_summary(model_output_cephalos)
+summary_firstline <- extract_model_summary(model_output_firstline)
+summary_mdr <- extract_model_summary(model_output_mdr)
+
+# Adding model identifiers
+summary_carbap$model <- "Carbapenem Resistance"
+summary_cephalos$model <- "Cephalosporin Resistance"
+summary_firstline$model <- "First-line Antibiotic Resistance"
+summary_mdr$model <- "MDR Resistance"
+
+# Combining all summaries into one dataframe
+combined_results <- bind_rows(summary_carbap, summary_cephalos, summary_firstline, summary_mdr)
+
+# Optionally, select and rename columns for clarity
+final_results_US <- combined_results %>%
+  dplyr::select(Model = model, Term = term, Estimate = estimate, EDF = edf, Ref.DF = ref.df, Std.Error = std.error,
+                Statistic = statistic, `P.Value` = p.value)
+#####
+
+#-------------------------------------------#
+###FIRST DERIVATIVE GRAPHS, US states:
+#-------------------------------------------#
+
+#NEW, CARBAPENEM RESISTANCE GRAPH USA: ######
+model_output_carbap_us <- fit_gam_model(state_resistance_carbap)
+final_dataset<- model.frame(model_output_carbap_us$fr)
+original_geo_levels <- levels(final_dataset$GEOID)
+#years_range <- seq(min(state_resistance_carbap$Year), max(state_resistance_carbap$Year), length.out = 100)
+# Create prediction data
+new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
+
+state_resistance_carbap$NAME <- state_resistance_carbap$State
+state_resistance_carbap$Year <- as.numeric(as.character(state_resistance_carbap$Year))
+years_range <- seq(min(state_resistance_carbap$Year), max(state_resistance_carbap$Year), length.out = 100)
+# Create prediction data
+new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
+new_data$Year <- as.numeric(as.character(new_data$Year))  # Ensure Year is nume
+states_spatial_fitered<- model_output_carbap_us$states_spatial_filtered
+states_data_df <- as.data.frame(states_spatial_fitered@data)
+
+original_geo_levels <- unique(new_data$GEOID)
+GEOID_nameC <- states_data_df %>%
+  dplyr::select(GEOID, NAME)
+unique_GEOID_data <- GEOID_nameC %>%
+  distinct(GEOID, .keep_all = TRUE)
+# Expand pred_data to include every combination of Year and GEOID
+pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by = 1),
+                         GEOID = original_geo_levels)
+
+# Predict from GAM using the created function
+predictions <- gam_predictions(model_output_carbap_us$fr, newdata = pred_data)
+predictions <- merge(predictions, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+predictions_carb_US <- gam_predictions(model_output_carbap_us$fr, newdata = pred_data)
+predictions_carb_US <- merge(predictions_carb_US, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+
+resultsGrowt <- derivatives_mh2(model_output_carbap_us$fr, predictions_carb_US)
+
+
+# Usage of the function
+derivatives_data <- derivatives_mh(model_output_carbap_us$fr, newdata = pred_data, type = "central", h1 = 0.001, h2 = 0.001,startpoint = 0)
+
+derivatives_data$growth_rate <- derivatives_data$first_derivative + (derivatives_data$second_derivative / derivatives_data$first_derivative)
+
+merged_data <- merge(derivatives_data, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+predictions <- predictions %>%
+  group_by(NAME) %>%
+  mutate(
+    # Using lag to shift the pred values down
+    pred_lag = lag(pred, default = NA),
+    pred_lagu = lag(pred_upper, default = NA),
+    pred_lagl = lag(pred_lower, default = NA),
+    
+    # Calculate the growth rate
+    growth_rate2 = if_else(
+      is.na(pred_lag),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred - pred_lag) / pred_lag),  # Calculate percentage change
+    
+    growth_rate2_up = if_else(
+      is.na(pred_lagu),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_upper - pred_lagu) / pred_lagu),  # Calculate percentage change
+    
+    growth_rate2_lo = if_else(
+      is.na(pred_lagl),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_lower - pred_lagl) / pred_lagl)  # Calculate percentage change
+  ) %>%
+  dplyr::select(-pred_lag)  # Remove the temporary lag column
+
+Carb_predictions_grat<-predictions 
+Carb_changep_US<- merged_data
+
+# Plotting
+num_colors <- length(unique(merged_data$NAME))
+palette <- colorRampPalette(brewer.pal(8, "Dark2"))(num_colors)
+# Calculate the maximum and minimum values for setting y-axis limits
+y_max <- max(merged_data$first_upper, na.rm = TRUE)
+y_min <- min(merged_data$first_lower, na.rm = TRUE)
+# If needed, you can add some padding to ensure all data points are within the view
+padding <- (y_max - y_min) * 0.05  # 5% padding
+y_max <- y_max + padding
+y_min <- y_min - padding
+# Plotting with adjustments
+# Plotting with universal y-axis limits
+p <- ggplot(data = merged_data, aes(x = Year, y = first_derivative, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = first_lower, ymax = first_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022))+# Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  labs(title = "",
+       x = "Year",
+       y = "First derivative") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5)
+  ) +
+  facet_wrap(~NAME, scales = "free_y")   # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "first_derivat_us_carb.tiff", plot = p, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+#-----------------------------#
+#PREDICTIONS: per state US 
+#-----------------------------#
+max_y <- max(predictions$pred_upper, na.rm = TRUE)
+predictions$pred_lower <- ifelse(predictions$pred_lower < 0, 0, predictions$pred_lower)
+
+# Generate the plot
+ppred <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  facet_wrap(~NAME, scales = "fixed") +  # Use fixed scales for y-axis across all facets
+  scale_color_manual(values = palette) +
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = seq(min(predictions$Year), max(predictions$Year), by = 1)) +
+  scale_y_continuous(limits = c(0,35), breaks = seq(0, 35, by = 5)) +
+  labs(title = "",
+       x = "Year",
+       y = "Estimated carbapenem-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5),
+    axis.text.y = element_text(size=6)
+  )
+# Display the plot
+print(ppred)
+ggsave(filename = "predictions_breakpoint_carb_us.tiff", plot = ppred, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+Florida_predictions <- predictions %>%
+  filter(NAME == "New York")
+merged_dataFlorida <- merged_data %>%
+  filter(NAME == "New York")
+Florida_plot<-ggplot(data = Florida_predictions, aes(x = Year, y = pred)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper), alpha = 0.2) +
+  geom_vline(data = filter(merged_dataFlorida , first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_dataFlorida, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  facet_wrap(~NAME, scales = "fixed") +  # Use fixed scales for y-axis across all facets
+  scale_color_manual(values = palette) +
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = seq(min(predictions$Year), max(predictions$Year), by = 1)) +
+  scale_y_continuous(breaks = seq(0, 36, by = 4)) +
+  labs(title = "",
+       x = "Year",
+       y = "Estimated carbapenem-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1, size=7))
+
+
+
+#-----------------------------#
+#PREDICTIONS: All together
+#-----------------------------#
+# Step 1: Prepare the data for labels
+label_data <- predictions %>%
+  group_by(NAME) %>%
+  filter(Year == max(Year)) %>%
+  ungroup()
+
+final_palette <- colorRampPalette(RColorBrewer::brewer.pal(8, "Set2"))(45)
+# Step 2: Generate the plot
+ppred_alle <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  geom_label_repel(data = label_data, aes(label = NAME, y = pred), 
+                   point.padding = 0.2, nudge_x = 1, direction = 'y', 
+                   size = 3.5, color = "black", fontface = "bold",
+                   box.padding = 0.35, segment.color = "grey50",
+                   fill = "white") +  # White background for labels
+  scale_color_manual(values = final_palette) +
+  scale_fill_manual(values = final_palette) +
+  scale_x_continuous(breaks = 2004:2022) +
+  scale_y_continuous(limits = c(NA, max(predictions$pred_upper) +4)) +
+  scale_y_continuous(breaks = seq(0, 50, by = 5))+
+  labs(title = "",
+       x = "Year",
+       y = "Estimated carbapenem-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 360, hjust = 1, size=12),
+    axis.text.y = element_text(size=12),
+    axis.title.x = element_text(size=13),
+    axis.title.y = element_text(size=13)
+  )
+
+
+# Calculate max and min values
+extreme_values <- predictions %>%
+  group_by(NAME) %>%
+  summarize(max_pred = max(pred, na.rm = TRUE), min_pred = min(pred, na.rm = TRUE)) %>%
+  ungroup()
+# Ranking for maximum and minimum predictions
+extreme_values <- extreme_values %>%
+  arrange(desc(max_pred)) %>%
+  mutate(rank_max = row_number()) %>%
+  arrange(min_pred) %>%
+  mutate(rank_min = row_number())
+# Filter to get only the top 2 and bottom 2
+extreme_values <- extreme_values %>%
+  filter(rank_max <= 3 | rank_min <= 3)
+# Prepare highlighted names list
+highlighted_names <- unique(c(extreme_values$NAME[extreme_values$rank_max <= 3], 
+                              extreme_values$NAME[extreme_values$rank_min <= 3]))
+predictions <- predictions %>%
+  mutate(
+    color = ifelse(NAME %in% highlighted_names, NAME, NA),
+    pred = ifelse(is.na(pred), 0, pred)  # Replace NA predictions with 0 or another suitable default value
+  )
+# Check range of 'pred' to adjust y-axis limits
+range(predictions$pred, na.rm = TRUE)
+# Define the color palette
+unique_names <- unique(predictions$color, na.rm = TRUE)
+num_colors <- length(unique_names)
+
+# Choose a palette, e.g., 'Set1' which is good for categorical data
+# Ensure that there are enough colors, if not repeat the palette
+palette_colors <- brewer.pal(min(num_colors, 8), "Set3")
+if (num_colors > 8) {
+  palette_colors <- rep(palette_colors, length.out = num_colors)
+}
+
+final_palette <- setNames(palette_colors, unique_names)
+# Create the plot
+ppred_alle2x_us <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = color), size = 1.4, alpha = 1.9, na.rm = TRUE) +  # Thicker, less transparent lines
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.02) +
+  scale_color_manual(values = final_palette, na.translate = FALSE) +
+  scale_fill_manual(values = final_palette, guide = "none") +  # Make sure there is a plus sign at the end
+  scale_x_continuous(
+    breaks = seq(from = 2004, to = 2022, by = 4),
+    limits = c(2004, 2022)  # Closing parenthesis for limits
+  ) +  # Closing parenthesis was missing after 2022
+  scale_y_continuous(
+    limits = c(min(predictions$pred_lower, na.rm = TRUE) - 0, 
+               max(predictions$pred_upper, na.rm = TRUE) + 0), 
+    breaks = seq(0, 50, by = 5)
+  ) +
+  labs(title = "C. Predicted CRE (%), US",
+       x = "Year",
+       y = "Predicted carbapenem-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 360, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  )
+
+# Print the plot
+ppred_alle2x_us <- ppred_alle2x_us +
+  labs(color = NULL) +  # Removes the legend title
+  labs(title = "C. Estimated CRE (%), US") +  # Ensure the title is set correctly
+  theme(
+    plot.title = element_text(face = "bold")  # Makes the title bold
+  )
+
+
+ggsave(filename = "pred_allUSstates_toget_carb.tiff", plot = ppred_alle, device = "tiff", path = base_pathOut,
+       width = 16, height = 10, dpi = 500, units = "in")
+
+#-----------------------------#
+# Plotting SECOND DERIVATIVE:
+#-----------------------------#
+num_colors <- length(unique(merged_data$NAME))
+palette <- colorRampPalette(brewer.pal(8, "Dark2"))(num_colors)
+# Calculate the maximum and minimum values for setting y-axis limits
+y_max <- max(merged_data$second_upper, na.rm = TRUE)
+y_min <- min(merged_data$second_lower, na.rm = TRUE)
+# If needed, you can add some padding to ensure all data points are within the view
+padding <- (y_max - y_min) * 0.05  # 5% padding
+y_max <- y_max + padding
+y_min <- y_min - padding
+# Plotting with adjustments
+# Plotting with universal y-axis limits
+p2<- ggplot(data = merged_data, aes(x = Year, y = second_derivative, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = second_lower, ymax = second_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Second derivative") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5),
+    axis.text.y = element_text( size=6),
+    legend.position = "none"
+  ) +
+  facet_wrap(~NAME, scales = "free_y") #+
+#scale_y_continuous(limits = c(y_min, y_max))  # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "second_derivat_us_carb.tiff", plot = p2, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+p2Florida<- ggplot(data = merged_dataFlorida, aes(x = Year, y = second_derivative, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = second_lower, ymax = second_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_dataFlorida, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_dataFlorida, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "red") +  # Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  labs(title = "",
+       x = "Year",
+       y = "Second derivative") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none"
+  ) +
+  facet_wrap(~NAME, scales = "free_y")
+
+#-----------------------------#
+#GROWTH RATE: 
+#-----------------------------#
+# Assuming derivatives_data is already prepared and using mutate for efficiency
+growth_rate_ci <- resultsGrowt  %>% #merged_data
+  rowwise() %>%
+  mutate(
+    growth_rate_results = list(simulate_growth_rate_ci(First_Derivative, Second_Derivative, n_sim = 1000))
+  ) %>%
+  unnest_wider(c(growth_rate_results)) %>%
+  ungroup()
+
+growth_rate_ci <- merge(predictions, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+
+growth_rate_ci$doubling_times <-  log(2) / growth_rate_ci$growth_rate2 # Calculate doubling time
+growth_rate_ci$halving_times <- log(0.5) / growth_rate_ci$growth_rate2   # Calculate halving time
+growth_rate_ci$NAME<- growth_rate_ci$NAME.x
+
+growth_rate_ci <- growth_rate_ci %>%
+  mutate(
+    growth_rate2 = if_else(Year == 2004, NA, growth_rate2),
+    growth_rate2_lo = if_else(Year == 2004, NA, growth_rate2_lo),
+    growth_rate2_up = if_else(Year == 2004, NA, growth_rate2_up),
+    doubling_times = if_else(Year == 2004, NA, doubling_times),
+    halving_times = if_else(Year == 2004, NA, halving_times)
+  )
+
+
+p3<- ggplot(data = growth_rate_ci, aes(x = Year, y = growth_rate2, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  #geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  #geom_ribbon(aes(ymin = growth_rate2_lo, ymax = growth_rate2_up), alpha = 0.2) +  # Shaded area for CIs
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022))+
+  labs(title = "",
+       x = "Year",
+       y = "Growth rate (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=6),
+    axis.text.y = element_text( size=7) 
+  ) +
+  facet_wrap(~NAME, scales = "free_y")  # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "growth_ratio_carbUS.tiff", plot = p3, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+
+Florida_growth_rate_ci <- growth_rate_ci %>%
+  filter(NAME == "New York")
+merged_dataFlorida <- merged_data %>%
+  filter(NAME == "New York")
+
+p3Florida<- ggplot(data = Florida_growth_rate_ci, aes(x = Year, y = growth_rate2)) +
+  geom_line(aes(color = NAME), size = 1) +
+  #geom_ribbon(aes(ymin = growth_rate2l, ymax = growth_rate2u, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_dataFlorida, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_dataFlorida, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_ribbon(aes(ymin = growth_rate2_lo, ymax = growth_rate2_up), alpha = 0.2) +  # Shaded area for CIs
+  geom_hline(yintercept = 0, linetype = "solid", color = "red") +  # Line at y=0
+  scale_x_continuous(breaks = 2005:2022, labels = as.character(2005:2022)) +
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  labs(title = "",
+       x = "Year",
+       y = "Growth rate (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=9)
+  ) +
+  facet_wrap(~NAME, scales = "free_y")  # Apply the same y-axis limits to all facets
+
+
+
+# Plot Doubling Times
+p_doubling <- ggplot(data = growth_rate_ci, aes(x = Year, y = doubling_times, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Doubling Time (in units of time)") +
+  theme_minimal() +
+  theme(text = element_text(size = 9, family = "Times New Roman"),
+        strip.background = element_rect(fill = "white", colour = "black"),
+        strip.text = element_text(size = 9, face = "bold"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=6),
+        axis.text.y = element_text(size=7),
+        legend.position = "none") +
+  facet_wrap(~NAME, scales = "free_y")
+
+# Plot Halving Times
+p_halving <- ggplot(data = growth_rate_ci, aes(x = Year, y = halving_times, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Halving Time (in units of time)") +
+  theme_minimal() +
+  theme(text = element_text(size = 9, family = "Times New Roman"),
+        strip.background = element_rect(fill = "white", colour = "black"),
+        strip.text = element_text(size = 9, face = "bold"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5),
+        axis.text.y = element_text(size=7),
+        legend.position = "none") +
+  facet_wrap(~NAME, scales = "free_y")
+
+
+ggsave(filename = "p_doublingUS_carb.tiff", plot = p_doubling, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+ggsave(filename = "p_halvingUS_carb.tiff", plot = p_halving, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+
+
+######
+
+#NEW, CEPHALOSPORIN RESISTANCE GRAPH USA: ######
+model_output_cephalos_us <- fit_gam_model(state_resistance_cephalos)
+final_dataset<- model.frame(model_output_cephalos_us$fr)
+original_geo_levels <- levels(final_dataset$GEOID)
+years_range <- seq(min(state_resistance_carbap$Year), max(state_resistance_carbap$Year), length.out = 100)
+# Create prediction data
+new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
+
+state_resistance_cephalos$NAME <- state_resistance_cephalos$State
+state_resistance_cephalos$Year <- as.numeric(as.character(state_resistance_cephalos$Year))
+years_range <- seq(min(state_resistance_cephalos$Year), max(state_resistance_cephalos$Year), length.out = 100)
+# Create prediction data
+new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
+new_data$Year <- as.numeric(as.character(new_data$Year))  # Ensure Year is nume
+states_spatial_fitered<- model_output_cephalos_us$states_spatial_filtered
+states_data_df <- as.data.frame(states_spatial_fitered@data)
+
+original_geo_levels <- unique(new_data$GEOID)
+GEOID_nameC <- states_data_df %>%
+  dplyr::select(GEOID, NAME)
+unique_GEOID_data <- GEOID_nameC %>%
+  distinct(GEOID, .keep_all = TRUE)
+# Expand pred_data to include every combination of Year and GEOID
+pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by = 1),
+                         GEOID = original_geo_levels)
+
+# Predict from GAM using the created function
+predictions <- gam_predictions(model_output_cephalos_us$fr, newdata = pred_data)
+predictions <- merge(predictions, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+predictions_cephalos_US <- gam_predictions(model_output_cephalos_us$fr, newdata = pred_data)
+predictions_cephalos_US <- merge(predictions_cephalos_US, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+
+resultsGrowt <- derivatives_mh2(model_output_cephalos_us$fr, predictions_cephalos_US)
+
+
+# Usage of the function
+derivatives_data <- derivatives_mh(model_output_cephalos_us$fr, newdata = pred_data, type = "central", h1 = 0.001, h2 = 0.001,startpoint = 0)
+
+derivatives_data$growth_rate <- derivatives_data$first_derivative + (derivatives_data$second_derivative / derivatives_data$first_derivative)
+
+merged_data <- merge(derivatives_data, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+predictions <- predictions %>%
+  group_by(NAME) %>%
+  mutate(
+    # Using lag to shift the pred values down
+    pred_lag = lag(pred, default = NA),
+    pred_lagu = lag(pred_upper, default = NA),
+    pred_lagl = lag(pred_lower, default = NA),
+    
+    # Calculate the growth rate
+    growth_rate2 = if_else(
+      is.na(pred_lag),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred - pred_lag) / pred_lag),  # Calculate percentage change
+    
+    growth_rate2_up = if_else(
+      is.na(pred_lagu),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_upper - pred_lagu) / pred_lagu),  # Calculate percentage change
+    
+    growth_rate2_lo = if_else(
+      is.na(pred_lagl),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_lower - pred_lagl) / pred_lagl)  # Calculate percentage change
+  ) %>%
+  dplyr::select(-pred_lag)  # Remove the temporary lag column
+
+cephalos_predictions_grat<-predictions 
+cephalos_changep_US<- merged_data
+
+# Plotting
+num_colors <- length(unique(merged_data$NAME))
+palette <- colorRampPalette(brewer.pal(8, "Dark2"))(num_colors)
+# Calculate the maximum and minimum values for setting y-axis limits
+y_max <- max(merged_data$first_upper, na.rm = TRUE)
+y_min <- min(merged_data$first_lower, na.rm = TRUE)
+# If needed, you can add some padding to ensure all data points are within the view
+padding <- (y_max - y_min) * 0.05  # 5% padding
+y_max <- y_max + padding
+y_min <- y_min - padding
+
+result_tablexoxxx <- merged_data %>%
+  filter(derivative_breakpoint == 1) %>%
+  group_by(Year) %>%
+  summarise(Count = n(), .groups = 'drop') # summarise to count occurrences, and drop grouping automatically
+print(result_tablexoxxx)
+
+# Plotting with adjustments
+# Plotting with universal y-axis limits
+p <- ggplot(data = merged_data, aes(x = Year, y = first_derivative, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = first_lower, ymax = first_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022))+# Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  labs(title = "",
+       x = "Year",
+       y = "First derivative") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5)
+  ) +
+  facet_wrap(~NAME, scales = "free_y")   # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "first_derivat_us_cephalos.tiff", plot = p, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+#-----------------------------#
+#PREDICTIONS: per country Europe
+#-----------------------------#
+max_y <- max(predictions$pred_upper, na.rm = TRUE)
+predictions$pred_lower <- ifelse(predictions$pred_lower < 0, 0, predictions$pred_lower)
+
+# Generate the plot
+ppred <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  facet_wrap(~NAME, scales = "fixed") +  # Use fixed scales for y-axis across all facets
+  scale_color_manual(values = palette) +
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = seq(min(predictions$Year), max(predictions$Year), by = 1)) +
+  scale_y_continuous(limits = c(0,60), breaks = seq(0, 60, by = 10)) +
+  labs(title = "",
+       x = "Year",
+       y = "Estimated 3GCR (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5),
+    axis.text.y = element_text(size=6)
+  )
+# Display the plot
+ggsave(filename = "predictions_breakpoint_cephalos_us.tiff", plot = ppred, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+Florida_predictions <- predictions %>%
+  filter(NAME == "New York")
+merged_dataFlorida <- merged_data %>%
+  filter(NAME == "New York")
+Florida_plot_egcr<-ggplot(data = Florida_predictions, aes(x = Year, y = pred)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper), alpha = 0.2) +
+  geom_vline(data = filter(merged_dataFlorida , first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_dataFlorida, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  facet_wrap(~NAME, scales = "fixed") +  # Use fixed scales for y-axis across all facets
+  scale_color_manual(values = palette) +
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = seq(min(predictions$Year), max(predictions$Year), by = 1)) +
+  scale_y_continuous(limits = c(15, 50), breaks = seq(15, 50, by = 5)) +
+  labs(title = "",
+       x = "Year",
+       y = "Estimated 3GCR (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1, size=7))
+
+
+
+#-----------------------------#
+#PREDICTIONS: All together
+#-----------------------------#
+# Step 1: Prepare the data for labels
+label_data <- predictions %>%
+  group_by(NAME) %>%
+  filter(Year == max(Year)) %>%
+  ungroup()
+
+final_palette <- colorRampPalette(RColorBrewer::brewer.pal(8, "Set2"))(45)
+# Step 2: Generate the plot
+ppred_alle <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  geom_label_repel(data = label_data, aes(label = NAME, y = pred), 
+                   point.padding = 0.2, nudge_x = 1, direction = 'y', 
+                   size = 3.5, color = "black", fontface = "bold",
+                   box.padding = 0.35, segment.color = "grey50",
+                   fill = "white") +  # White background for labels
+  scale_color_manual(values = final_palette) +
+  scale_fill_manual(values = final_palette) +
+  scale_x_continuous(breaks = 2004:2022) +
+  scale_y_continuous(limits = c(NA, max(predictions$pred_upper) +4)) +
+  scale_y_continuous(breaks = seq(0, 60, by = 5))+
+  labs(title = "",
+       x = "Year",
+       y = "Estimated 3GCR (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 360, hjust = 1, size=12),
+    axis.text.y = element_text(size=12),
+    axis.title.x = element_text(size=13),
+    axis.title.y = element_text(size=13)
+  )
+
+
+# Calculate max and min values
+extreme_values <- predictions %>%
+  group_by(NAME) %>%
+  summarize(max_pred = max(pred, na.rm = TRUE), min_pred = min(pred, na.rm = TRUE)) %>%
+  ungroup()
+# Ranking for maximum and minimum predictions
+extreme_values <- extreme_values %>%
+  arrange(desc(max_pred)) %>%
+  mutate(rank_max = row_number()) %>%
+  arrange(min_pred) %>%
+  mutate(rank_min = row_number())
+# Filter to get only the top 2 and bottom 2
+extreme_values <- extreme_values %>%
+  filter(rank_max <= 3 | rank_min <= 3)
+# Prepare highlighted names list
+highlighted_names <- unique(c(extreme_values$NAME[extreme_values$rank_max <= 3], 
+                              extreme_values$NAME[extreme_values$rank_min <= 3]))
+predictions <- predictions %>%
+  mutate(
+    color = ifelse(NAME %in% highlighted_names, NAME, NA),
+    pred = ifelse(is.na(pred), 0, pred)  # Replace NA predictions with 0 or another suitable default value
+  )
+# Check range of 'pred' to adjust y-axis limits
+range(predictions$pred, na.rm = TRUE)
+# Define the color palette
+unique_names <- unique(predictions$color, na.rm = TRUE)
+num_colors <- length(unique_names)
+
+# Choose a palette, e.g., 'Set1' which is good for categorical data
+# Ensure that there are enough colors, if not repeat the palette
+palette_colors <- brewer.pal(min(num_colors, 8), "Set3")
+if (num_colors > 8) {
+  palette_colors <- rep(palette_colors, length.out = num_colors)
+}
+
+final_palette <- setNames(palette_colors, unique_names)
+# Create the plot
+ppred_alle2x_egcr <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = color), size = 1.4, alpha = 1.9, na.rm = TRUE) +  # Thicker, less transparent lines
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.02) +
+  scale_color_manual(values = final_palette, na.translate = FALSE) +
+  scale_fill_manual(values = final_palette, guide = "none") +  # Make sure there is a plus sign at the end
+  scale_x_continuous(
+    breaks = seq(from = 2004, to = 2022, by = 4),
+    limits = c(2004, 2022)  # Closing parenthesis for limits
+  ) +  # Closing parenthesis was missing after 2022
+  scale_y_continuous(
+    limits = c(min(predictions$pred_lower, na.rm = TRUE) - 0, 
+               max(predictions$pred_upper, na.rm = TRUE) + 0), 
+    breaks = seq(0, 60, by = 5)
+  ) +
+  labs(title = "C. Estimated 3GCR (%), US",
+       x = "Year",
+       y = "Estimated 3GCR (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 360, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  )
+
+# Print the plot
+ppred_alle2x_egcr <- ppred_alle2x_egcr +
+  labs(color = NULL) +  # Removes the legend title
+  labs(title = "C. Estimated 3GCR (%), US") +  # Ensure the title is set correctly
+  theme(plot.title = element_text(face = "bold"),  # Makes the title bold
+    axis.text.x = element_text(size = 10)
+  )
+
+ggsave(filename = "pred_allUSstates_toget_cephalos.tiff", plot = ppred_alle, device = "tiff", path = base_pathOut,
+       width = 16, height = 11, dpi = 500, units = "in")
+
+#-----------------------------#
+# Plotting SECOND DERIVATIVE:
+#-----------------------------#
+num_colors <- length(unique(merged_data$NAME))
+palette <- colorRampPalette(brewer.pal(8, "Dark2"))(num_colors)
+# Calculate the maximum and minimum values for setting y-axis limits
+y_max <- max(merged_data$second_upper, na.rm = TRUE)
+y_min <- min(merged_data$second_lower, na.rm = TRUE)
+# If needed, you can add some padding to ensure all data points are within the view
+padding <- (y_max - y_min) * 0.05  # 5% padding
+y_max <- y_max + padding
+y_min <- y_min - padding
+# Plotting with adjustments
+# Plotting with universal y-axis limits
+p2<- ggplot(data = merged_data, aes(x = Year, y = second_derivative, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = second_lower, ymax = second_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Second derivative") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5),
+    axis.text.y = element_text( size=6),
+    legend.position = "none"
+  ) +
+  facet_wrap(~NAME, scales = "free_y") #+
+#scale_y_continuous(limits = c(y_min, y_max))  # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "second_derivat_us_cephalos.tiff", plot = p2, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+p2Florida_egcr<- ggplot(data = merged_dataFlorida, aes(x = Year, y = second_derivative, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = second_lower, ymax = second_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_dataFlorida, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_dataFlorida, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "red") +  # Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  labs(title = "",
+       x = "Year",
+       y = "Second derivative") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none"
+  ) +
+  facet_wrap(~NAME, scales = "free_y")
+
+
+
+#-----------------------------#
+#GROWTH RATE: 
+#-----------------------------#
+# Assuming derivatives_data is already prepared and using mutate for efficiency
+growth_rate_ci <- resultsGrowt  %>% #merged_data
+  rowwise() %>%
+  mutate(
+    growth_rate_results = list(simulate_growth_rate_ci(First_Derivative, Second_Derivative, n_sim = 1000))
+  ) %>%
+  unnest_wider(c(growth_rate_results)) %>%
+  ungroup()
+
+growth_rate_ci <- merge(predictions, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+
+growth_rate_ci$doubling_times <-  log(2) / growth_rate_ci$growth_rate2 # Calculate doubling time
+growth_rate_ci$halving_times <- log(0.5) / growth_rate_ci$growth_rate2   # Calculate halving time
+growth_rate_ci$NAME<- growth_rate_ci$NAME.x
+
+growth_rate_ci <- growth_rate_ci %>%
+  mutate(
+    growth_rate2 = if_else(Year == 2004, NA, growth_rate2),
+    growth_rate2_lo = if_else(Year == 2004, NA, growth_rate2_lo),
+    growth_rate2_up = if_else(Year == 2004, NA, growth_rate2_up),
+    doubling_times = if_else(Year == 2004, NA, doubling_times),
+    halving_times = if_else(Year == 2004, NA, halving_times)
+  )
+
+
+p3<- ggplot(data = growth_rate_ci, aes(x = Year, y = growth_rate2, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  #geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  #geom_ribbon(aes(ymin = growth_rate2_lo, ymax = growth_rate2_up), alpha = 0.2) +  # Shaded area for CIs
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022))+
+  labs(title = "",
+       x = "Year",
+       y = "Growth rate (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=6),
+    axis.text.y = element_text( size=7) 
+  ) +
+  facet_wrap(~NAME, scales = "free_y")  # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "growth_ratio_cephalosUS.tiff", plot = p3, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+Florida_growth_rate_ci <- growth_rate_ci %>%
+  filter(NAME == "New York")
+merged_dataFlorida <- merged_data %>%
+  filter(NAME == "New York")
+
+p3Florida_egcr<- ggplot(data = Florida_growth_rate_ci, aes(x = Year, y = growth_rate2)) +
+  geom_line(aes(color = NAME), size = 1) +
+  #geom_ribbon(aes(ymin = growth_rate2l, ymax = growth_rate2u, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_dataFlorida, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_dataFlorida, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_ribbon(aes(ymin = growth_rate2_lo, ymax = growth_rate2_up), alpha = 0.2) +  # Shaded area for CIs
+  geom_hline(yintercept = 0, linetype = "solid", color = "red") +  # Line at y=0
+  scale_x_continuous(breaks = 2005:2022, labels = as.character(2005:2022)) +
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  labs(title = "",
+       x = "Year",
+       y = "Growth rate (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=9)
+  ) +
+  facet_wrap(~NAME, scales = "free_y")  # Apply the same y-axis limits to all facets
+
+
+
+
+
+# Plot Doubling Times
+p_doubling <- ggplot(data = growth_rate_ci, aes(x = Year, y = doubling_times, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Doubling Time (in units of time)") +
+  theme_minimal() +
+  theme(text = element_text(size = 9, family = "Times New Roman"),
+        strip.background = element_rect(fill = "white", colour = "black"),
+        strip.text = element_text(size = 9, face = "bold"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=6),
+        axis.text.y = element_text(size=7),
+        legend.position = "none") +
+  facet_wrap(~NAME, scales = "free_y")
+
+# Plot Halving Times
+p_halving <- ggplot(data = growth_rate_ci, aes(x = Year, y = halving_times, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Halving Time (in units of time)") +
+  theme_minimal() +
+  theme(text = element_text(size = 9, family = "Times New Roman"),
+        strip.background = element_rect(fill = "white", colour = "black"),
+        strip.text = element_text(size = 9, face = "bold"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5),
+        axis.text.y = element_text(size=7),
+        legend.position = "none") +
+  facet_wrap(~NAME, scales = "free_y")
+
+
+ggsave(filename = "p_doublingUS_cephalos.tiff", plot = p_doubling, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+ggsave(filename = "p_halvingUS_cephalos.tiff", plot = p_halving, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+######
+
+#NEW, FIRST-LINE ATB RESISTANCE GRAPH USA: ######
+model_output_firstline_us <- fit_gam_model(state_resistance_firstline)
+final_dataset<- model.frame(model_output_firstline_us$fr)
+original_geo_levels <- levels(final_dataset$GEOID)
+years_range <- seq(min(state_resistance_carbap$Year), max(state_resistance_carbap$Year), length.out = 100)
+# Create prediction data
+new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
+
+state_resistance_firstline$NAME <- state_resistance_firstline$State
+state_resistance_firstline$Year <- as.numeric(as.character(state_resistance_firstline$Year))
+years_range <- seq(min(state_resistance_firstline$Year), max(state_resistance_firstline$Year), length.out = 100)
+# Create prediction data
+new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
+new_data$Year <- as.numeric(as.character(new_data$Year))  # Ensure Year is nume
+states_spatial_fitered<- model_output_firstline_us$states_spatial_filtered
+states_data_df <- as.data.frame(states_spatial_fitered@data)
+
+original_geo_levels <- unique(new_data$GEOID)
+GEOID_nameC <- states_data_df %>%
+  dplyr::select(GEOID, NAME)
+unique_GEOID_data <- GEOID_nameC %>%
+  distinct(GEOID, .keep_all = TRUE)
+# Expand pred_data to include every combination of Year and GEOID
+pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by = 1),
+                         GEOID = original_geo_levels)
+
+# Predict from GAM using the created function
+predictions <- gam_predictions(model_output_firstline_us$fr, newdata = pred_data)
+predictions <- merge(predictions, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+predictions_firstline_US <- gam_predictions(model_output_firstline_us$fr, newdata = pred_data)
+predictions_firstline_US <- merge(predictions_firstline_US, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+
+resultsGrowt <- derivatives_mh2(model_output_firstline_us$fr, predictions_firstline_US)
+
+
+# Usage of the function
+derivatives_data <- derivatives_mh(model_output_firstline_us$fr, newdata = pred_data, type = "central", h1 = 0.001, h2 = 0.001,startpoint = 0)
+
+derivatives_data$growth_rate <- derivatives_data$first_derivative + (derivatives_data$second_derivative / derivatives_data$first_derivative)
+
+merged_data <- merge(derivatives_data, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+predictions <- predictions %>%
+  group_by(NAME) %>%
+  mutate(
+    # Using lag to shift the pred values down
+    pred_lag = lag(pred, default = NA),
+    pred_lagu = lag(pred_upper, default = NA),
+    pred_lagl = lag(pred_lower, default = NA),
+    
+    # Calculate the growth rate
+    growth_rate2 = if_else(
+      is.na(pred_lag),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred - pred_lag) / pred_lag),  # Calculate percentage change
+    
+    growth_rate2_up = if_else(
+      is.na(pred_lagu),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_upper - pred_lagu) / pred_lagu),  # Calculate percentage change
+    
+    growth_rate2_lo = if_else(
+      is.na(pred_lagl),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_lower - pred_lagl) / pred_lagl)  # Calculate percentage change
+  ) %>%
+  dplyr::select(-pred_lag)  # Remove the temporary lag column
+
+firstline_predictions_grat<-predictions 
+firstline_changep_US<- merged_data
+
+# Plotting
+num_colors <- length(unique(merged_data$NAME))
+palette <- colorRampPalette(brewer.pal(8, "Dark2"))(num_colors)
+# Calculate the maximum and minimum values for setting y-axis limits
+y_max <- max(merged_data$first_upper, na.rm = TRUE)
+y_min <- min(merged_data$first_lower, na.rm = TRUE)
+# If needed, you can add some padding to ensure all data points are within the view
+padding <- (y_max - y_min) * 0.05  # 5% padding
+y_max <- y_max + padding
+y_min <- y_min - padding
+# Plotting with adjustments
+# Plotting with universal y-axis limits
+p <- ggplot(data = merged_data, aes(x = Year, y = first_derivative, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = first_lower, ymax = first_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022))+# Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  labs(title = "",
+       x = "Year",
+       y = "First derivative") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5)
+  ) +
+  facet_wrap(~NAME, scales = "free_y")   # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "first_derivat_us_firstline.tiff", plot = p, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+#-----------------------------#
+#PREDICTIONS: per country Europe
+#-----------------------------#
+max_y <- max(predictions$pred_upper, na.rm = TRUE)
+predictions$pred_lower <- ifelse(predictions$pred_lower < 0, 0, predictions$pred_lower)
+
+# Generate the plot
+ppred <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  facet_wrap(~NAME, scales = "fixed") +  # Use fixed scales for y-axis across all facets
+  scale_color_manual(values = palette) +
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = seq(min(predictions$Year), max(predictions$Year), by = 1)) +
+  scale_y_continuous(limits = c(20,90), breaks = seq(20, 80, by = 10)) +
+  labs(title = "",
+       x = "Year",
+       y = "Predicted first-line antibiotic-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5),
+    axis.text.y = element_text(size=6)
+  )
+# Display the plot
+ggsave(filename = "predictions_breakpoint_firstline_us.tiff", plot = ppred, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+
+
+
+#-----------------------------#
+#PREDICTIONS: All together
+#-----------------------------#
+# Step 1: Prepare the data for labels
+label_data <- predictions %>%
+  group_by(NAME) %>%
+  filter(Year == max(Year)) %>%
+  ungroup()
+
+final_palette <- colorRampPalette(RColorBrewer::brewer.pal(8, "Set2"))(45)
+# Step 2: Generate the plot
+ppred_alle <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  geom_label_repel(data = label_data, aes(label = NAME, y = pred), 
+                   point.padding = 0.2, nudge_x = 1, direction = 'y', 
+                   size = 3.5, color = "black", fontface = "bold",
+                   box.padding = 0.35, segment.color = "grey50",
+                   fill = "white") +  # White background for labels
+  scale_color_manual(values = final_palette) +
+  scale_fill_manual(values = final_palette) +
+  scale_x_continuous(breaks = 2004:2022) +
+  scale_y_continuous(limits = c(NA, max(predictions$pred_upper) +4)) +
+  scale_y_continuous(breaks = seq(20, 80, by = 10))+
+  labs(title = "",
+       x = "Year",
+       y = "Predicted first-line antibiotic-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 360, hjust = 1, size=12),
+    axis.text.y = element_text(size=12),
+    axis.title.x = element_text(size=13),
+    axis.title.y = element_text(size=13)
+  )
+
+
+# Calculate max and min values
+extreme_values <- predictions %>%
+  group_by(NAME) %>%
+  summarize(max_pred = max(pred, na.rm = TRUE), min_pred = min(pred, na.rm = TRUE)) %>%
+  ungroup()
+# Ranking for maximum and minimum predictions
+extreme_values <- extreme_values %>%
+  arrange(desc(max_pred)) %>%
+  mutate(rank_max = row_number()) %>%
+  arrange(min_pred) %>%
+  mutate(rank_min = row_number())
+# Filter to get only the top 2 and bottom 2
+extreme_values <- extreme_values %>%
+  filter(rank_max <= 3 | rank_min <= 3)
+# Prepare highlighted names list
+highlighted_names <- unique(c(extreme_values$NAME[extreme_values$rank_max <= 3], 
+                              extreme_values$NAME[extreme_values$rank_min <= 3]))
+predictions <- predictions %>%
+  mutate(
+    color = ifelse(NAME %in% highlighted_names, NAME, NA),
+    pred = ifelse(is.na(pred), 0, pred)  # Replace NA predictions with 0 or another suitable default value
+  )
+# Check range of 'pred' to adjust y-axis limits
+range(predictions$pred, na.rm = TRUE)
+# Define the color palette
+unique_names <- unique(predictions$color, na.rm = TRUE)
+num_colors <- length(unique_names)
+
+# Choose a palette, e.g., 'Set1' which is good for categorical data
+# Ensure that there are enough colors, if not repeat the palette
+palette_colors <- brewer.pal(min(num_colors, 8), "Set3")
+if (num_colors > 8) {
+  palette_colors <- rep(palette_colors, length.out = num_colors)
+}
+
+final_palette <- setNames(palette_colors, unique_names)
+# Create the plot
+ppred_alle2x <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = color), size = 1, na.rm = TRUE) +  # Ensure NA values in color are ignored
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  scale_color_manual(values = final_palette, na.translate = FALSE) +
+  scale_fill_manual(values = final_palette, guide = "none") +  # Make sure there is a plus sign at the end
+  scale_x_continuous(
+    breaks = seq(from = 2004, to = 2022, by = 4),
+    limits = c(2004, 2022)  # Closing parenthesis for limits
+  ) +  # Closing parenthesis was missing after 2022
+  scale_y_continuous(
+    limits = c(min(predictions$pred_lower, na.rm = TRUE) - 0, 
+               max(predictions$pred_upper, na.rm = TRUE) + 0), 
+    breaks = seq(20, 80, by = 10)
+  ) +
+  labs(title = "C. Predicted CRE (%)",
+       x = "Year",
+       y = "Predicted first-line antibiotic-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 360, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  )
+
+# Print the plot
+
+
+ggsave(filename = "pred_allUSstates_toget_firstline.tiff", plot = ppred_alle, device = "tiff", path = base_pathOut,
+       width = 16, height = 11, dpi = 500, units = "in")
+
+#-----------------------------#
+# Plotting SECOND DERIVATIVE:
+#-----------------------------#
+num_colors <- length(unique(merged_data$NAME))
+palette <- colorRampPalette(brewer.pal(8, "Dark2"))(num_colors)
+# Calculate the maximum and minimum values for setting y-axis limits
+y_max <- max(merged_data$second_upper, na.rm = TRUE)
+y_min <- min(merged_data$second_lower, na.rm = TRUE)
+# If needed, you can add some padding to ensure all data points are within the view
+padding <- (y_max - y_min) * 0.05  # 5% padding
+y_max <- y_max + padding
+y_min <- y_min - padding
+# Plotting with adjustments
+# Plotting with universal y-axis limits
+p2<- ggplot(data = merged_data, aes(x = Year, y = second_derivative, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = second_lower, ymax = second_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Second derivative") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5),
+    axis.text.y = element_text( size=6),
+    legend.position = "none"
+  ) +
+  facet_wrap(~NAME, scales = "free_y") #+
+#scale_y_continuous(limits = c(y_min, y_max))  # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "second_derivat_us_firstline.tiff", plot = p2, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+#-----------------------------#
+#GROWTH RATE: 
+#-----------------------------#
+# Assuming derivatives_data is already prepared and using mutate for efficiency
+growth_rate_ci <- resultsGrowt  %>% #merged_data
+  rowwise() %>%
+  mutate(
+    growth_rate_results = list(simulate_growth_rate_ci(First_Derivative, Second_Derivative, n_sim = 1000))
+  ) %>%
+  unnest_wider(c(growth_rate_results)) %>%
+  ungroup()
+
+growth_rate_ci <- merge(predictions, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+
+growth_rate_ci$doubling_times <-  log(2) / growth_rate_ci$growth_rate2 # Calculate doubling time
+growth_rate_ci$halving_times <- log(0.5) / growth_rate_ci$growth_rate2   # Calculate halving time
+growth_rate_ci$NAME<- growth_rate_ci$NAME.x
+
+growth_rate_ci <- growth_rate_ci %>%
+  mutate(
+    growth_rate2 = if_else(Year == 2004, NA, growth_rate2),
+    growth_rate2_lo = if_else(Year == 2004, NA, growth_rate2_lo),
+    growth_rate2_up = if_else(Year == 2004, NA, growth_rate2_up),
+    doubling_times = if_else(Year == 2004, NA, doubling_times),
+    halving_times = if_else(Year == 2004, NA, halving_times)
+  )
+
+
+p3<- ggplot(data = growth_rate_ci, aes(x = Year, y = growth_rate2, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  #geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  #geom_ribbon(aes(ymin = growth_rate2_lo, ymax = growth_rate2_up), alpha = 0.2) +  # Shaded area for CIs
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022))+
+  labs(title = "",
+       x = "Year",
+       y = "Growth rate (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=6),
+    axis.text.y = element_text( size=7) 
+  ) +
+  facet_wrap(~NAME, scales = "free_y")  # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "growth_ratio_firstlineUS.tiff", plot = p3, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+
+
+
+
+# Plot Doubling Times
+p_doubling <- ggplot(data = growth_rate_ci, aes(x = Year, y = doubling_times, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Doubling Time (in units of time)") +
+  theme_minimal() +
+  theme(text = element_text(size = 9, family = "Times New Roman"),
+        strip.background = element_rect(fill = "white", colour = "black"),
+        strip.text = element_text(size = 9, face = "bold"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=6),
+        axis.text.y = element_text(size=7),
+        legend.position = "none") +
+  facet_wrap(~NAME, scales = "free_y")
+
+# Plot Halving Times
+p_halving <- ggplot(data = growth_rate_ci, aes(x = Year, y = halving_times, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Halving Time (in units of time)") +
+  theme_minimal() +
+  theme(text = element_text(size = 9, family = "Times New Roman"),
+        strip.background = element_rect(fill = "white", colour = "black"),
+        strip.text = element_text(size = 9, face = "bold"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5),
+        axis.text.y = element_text(size=7),
+        legend.position = "none") +
+  facet_wrap(~NAME, scales = "free_y")
+
+
+ggsave(filename = "p_doublingUS_firstline.tiff", plot = p_doubling, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+ggsave(filename = "p_halvingUS_firstline.tiff", plot = p_halving, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+######
+
+#NEW, MDR GRAPH USA: ######
+model_output_mdr_us <- fit_gam_model_mdr(state_resistance_mdr)
+final_dataset<- model.frame(model_output_mdr_us$sf)
+original_geo_levels <- levels(final_dataset$GEOID)
+years_range <- seq(min(state_resistance_carbap$Year), max(state_resistance_carbap$Year), length.out = 100)
+# Create prediction data
+new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
+
+state_resistance_mdr$NAME <- state_resistance_mdr$State
+state_resistance_mdr$Year <- as.numeric(as.character(state_resistance_mdr$Year))
+years_range <- seq(min(state_resistance_mdr$Year), max(state_resistance_mdr$Year), length.out = 100)
+# Create prediction data
+new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
+new_data$Year <- as.numeric(as.character(new_data$Year))  # Ensure Year is nume
+states_spatial_fitered<- model_output_mdr_us$states_spatial_filtered
+states_data_df <- as.data.frame(states_spatial_fitered@data)
+
+original_geo_levels <- unique(new_data$GEOID)
+GEOID_nameC <- states_data_df %>%
+  dplyr::select(GEOID, NAME)
+unique_GEOID_data <- GEOID_nameC %>%
+  distinct(GEOID, .keep_all = TRUE)
+# Expand pred_data to include every combination of Year and GEOID
+pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by = 1),
+                         GEOID = original_geo_levels)
+
+# Predict from GAM using the created function
+predictions <- gam_predictions(model_output_mdr_us$sf, newdata = pred_data)
+predictions <- merge(predictions, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+predictions_mdr_US <- gam_predictions(model_output_mdr_us$sf, newdata = pred_data)
+predictions_mdr_US <- merge(predictions_mdr_US, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+
+resultsGrowt <- derivatives_mh2(model_output_mdr_us$sf, predictions_mdr_US)
+
+
+# Usage of the function
+derivatives_data <- derivatives_mh(model_output_mdr_us$sf, newdata = pred_data, type = "central", h1 = 0.001, h2 = 0.001,startpoint = 0)
+
+derivatives_data$growth_rate <- derivatives_data$first_derivative + (derivatives_data$second_derivative / derivatives_data$first_derivative)
+
+merged_data <- merge(derivatives_data, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+predictions <- predictions %>%
+  group_by(NAME) %>%
+  mutate(
+    # Using lag to shift the pred values down
+    pred_lag = lag(pred, default = NA),
+    pred_lagu = lag(pred_upper, default = NA),
+    pred_lagl = lag(pred_lower, default = NA),
+    
+    # Calculate the growth rate
+    growth_rate2 = if_else(
+      is.na(pred_lag),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred - pred_lag) / pred_lag),  # Calculate percentage change
+    
+    growth_rate2_up = if_else(
+      is.na(pred_lagu),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_upper - pred_lagu) / pred_lagu),  # Calculate percentage change
+    
+    growth_rate2_lo = if_else(
+      is.na(pred_lagl),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_lower - pred_lagl) / pred_lagl)  # Calculate percentage change
+  ) %>%
+  dplyr::select(-pred_lag)  # Remove the temporary lag column
+
+mdr_predictions_grat<-predictions 
+mdr_changep_US<- merged_data
+
+# Plotting
+num_colors <- length(unique(merged_data$NAME))
+palette <- colorRampPalette(brewer.pal(8, "Dark2"))(num_colors)
+# Calculate the maximum and minimum values for setting y-axis limits
+y_max <- max(merged_data$first_upper, na.rm = TRUE)
+y_min <- min(merged_data$first_lower, na.rm = TRUE)
+# If needed, you can add some padding to ensure all data points are within the view
+padding <- (y_max - y_min) * 0.05  # 5% padding
+y_max <- y_max + padding
+y_min <- y_min - padding
+# Plotting with adjustments
+# Plotting with universal y-axis limits
+p <- ggplot(data = merged_data, aes(x = Year, y = first_derivative, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = first_lower, ymax = first_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022))+# Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  labs(title = "",
+       x = "Year",
+       y = "First derivative") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5)
+  ) +
+  facet_wrap(~NAME, scales = "free_y")   # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "first_derivat_us_mdr.tiff", plot = p, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+#-----------------------------#
+#PREDICTIONS: per country Europe
+#-----------------------------#
+max_y <- max(predictions$pred_upper, na.rm = TRUE)
+predictions$pred_lower <- ifelse(predictions$pred_lower < 0, 0, predictions$pred_lower)
+
+# Generate the plot
+ppred <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  facet_wrap(~NAME, scales = "fixed") +  # Use fixed scales for y-axis across all facets
+  scale_color_manual(values = palette) +
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = seq(min(predictions$Year), max(predictions$Year), by = 1)) +
+  scale_y_continuous(limits = c(0,70), breaks = seq(0, 70, by = 10)) +
+  labs(title = "",
+       x = "Year",
+       y = "Estimated multidrug-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5),
+    axis.text.y = element_text(size=6)
+  )
+# Display the plot
+ggsave(filename = "predictions_breakpoint_mdr_us.tiff", plot = ppred, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+
+
+
+#-----------------------------#
+#PREDICTIONS: All together
+#-----------------------------#
+# Step 1: Prepare the data for labels
+label_data <- predictions %>%
+  group_by(NAME) %>%
+  filter(Year == max(Year)) %>%
+  ungroup()
+
+final_palette <- colorRampPalette(RColorBrewer::brewer.pal(8, "Set2"))(45)
+# Step 2: Generate the plot
+ppred_alle <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  geom_label_repel(data = label_data, aes(label = NAME, y = pred), 
+                   point.padding = 0.2, nudge_x = 1, direction = 'y', 
+                   size = 3.5, color = "black", fontface = "bold",
+                   box.padding = 0.35, segment.color = "grey50",
+                   fill = "white") +  # White background for labels
+  scale_color_manual(values = final_palette) +
+  scale_fill_manual(values = final_palette) +
+  scale_x_continuous(breaks = 2004:2022) +
+  scale_y_continuous(limits = c(NA, max(predictions$pred_upper) +4)) +
+  scale_y_continuous(breaks = seq(0, 70, by = 10))+
+  labs(title = "",
+       x = "Year",
+       y = "Estimated multidrug-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 360, hjust = 1, size=12),
+    axis.text.y = element_text(size=12),
+    axis.title.x = element_text(size=13),
+    axis.title.y = element_text(size=13)
+  )
+
+
+# Calculate max and min values
+extreme_values <- predictions %>%
+  group_by(NAME) %>%
+  summarize(max_pred = max(pred, na.rm = TRUE), min_pred = min(pred, na.rm = TRUE)) %>%
+  ungroup()
+# Ranking for maximum and minimum predictions
+extreme_values <- extreme_values %>%
+  arrange(desc(max_pred)) %>%
+  mutate(rank_max = row_number()) %>%
+  arrange(min_pred) %>%
+  mutate(rank_min = row_number())
+# Filter to get only the top 2 and bottom 2
+extreme_values <- extreme_values %>%
+  filter(rank_max <= 3 | rank_min <= 3)
+# Prepare highlighted names list
+highlighted_names <- unique(c(extreme_values$NAME[extreme_values$rank_max <= 3], 
+                              extreme_values$NAME[extreme_values$rank_min <= 3]))
+predictions <- predictions %>%
+  mutate(
+    color = ifelse(NAME %in% highlighted_names, NAME, NA),
+    pred = ifelse(is.na(pred), 0, pred)  # Replace NA predictions with 0 or another suitable default value
+  )
+# Check range of 'pred' to adjust y-axis limits
+range(predictions$pred, na.rm = TRUE)
+# Define the color palette
+unique_names <- unique(predictions$color, na.rm = TRUE)
+num_colors <- length(unique_names)
+
+# Choose a palette, e.g., 'Set1' which is good for categorical data
+# Ensure that there are enough colors, if not repeat the palette
+palette_colors <- brewer.pal(min(num_colors, 8), "Set3")
+if (num_colors > 8) {
+  palette_colors <- rep(palette_colors, length.out = num_colors)
+}
+
+final_palette <- setNames(palette_colors, unique_names)
+# Create the plot
+ppred_alle2x <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = color), size = 1, na.rm = TRUE) +  # Ensure NA values in color are ignored
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  scale_color_manual(values = final_palette, na.translate = FALSE) +
+  scale_fill_manual(values = final_palette, guide = "none") +  # Make sure there is a plus sign at the end
+  scale_x_continuous(
+    breaks = seq(from = 2004, to = 2022, by = 4),
+    limits = c(2004, 2022)  # Closing parenthesis for limits
+  ) +  # Closing parenthesis was missing after 2022
+  scale_y_continuous(
+    limits = c(min(predictions$pred_lower, na.rm = TRUE) - 0, 
+               max(predictions$pred_upper, na.rm = TRUE) + 0), 
+    breaks = seq(0, 70, by = 10)
+  ) +
+  labs(title = "C. Estimated CRE (%)",
+       x = "Year",
+       y = "Estimated multidrug-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 360, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  )
+
+ggsave(filename = "pred_allUSstates_toget_mdr.tiff", plot = ppred_alle, device = "tiff", path = base_pathOut,
+       width = 16, height = 11, dpi = 500, units = "in")
+
+#-----------------------------#
+# Plotting SECOND DERIVATIVE:
+#-----------------------------#
+num_colors <- length(unique(merged_data$NAME))
+palette <- colorRampPalette(brewer.pal(8, "Dark2"))(num_colors)
+# Calculate the maximum and minimum values for setting y-axis limits
+y_max <- max(merged_data$second_upper, na.rm = TRUE)
+y_min <- min(merged_data$second_lower, na.rm = TRUE)
+# If needed, you can add some padding to ensure all data points are within the view
+padding <- (y_max - y_min) * 0.05  # 5% padding
+y_max <- y_max + padding
+y_min <- y_min - padding
+# Plotting with adjustments
+# Plotting with universal y-axis limits
+p2<- ggplot(data = merged_data, aes(x = Year, y = second_derivative, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = second_lower, ymax = second_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Second derivative") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5),
+    axis.text.y = element_text( size=6),
+    legend.position = "none"
+  ) +
+  facet_wrap(~NAME, scales = "free_y") #+
+#scale_y_continuous(limits = c(y_min, y_max))  # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "second_derivat_us_mdr.tiff", plot = p2, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+#-----------------------------#
+#GROWTH RATE: 
+#-----------------------------#
+# Assuming derivatives_data is already prepared and using mutate for efficiency
+growth_rate_ci <- resultsGrowt  %>% #merged_data
+  rowwise() %>%
+  mutate(
+    growth_rate_results = list(simulate_growth_rate_ci(First_Derivative, Second_Derivative, n_sim = 1000))
+  ) %>%
+  unnest_wider(c(growth_rate_results)) %>%
+  ungroup()
+
+growth_rate_ci <- merge(predictions, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+
+growth_rate_ci$doubling_times <-  log(2) / growth_rate_ci$growth_rate2 # Calculate doubling time
+growth_rate_ci$halving_times <- log(0.5) / growth_rate_ci$growth_rate2   # Calculate halving time
+growth_rate_ci$NAME<- growth_rate_ci$NAME.x
+
+growth_rate_ci <- growth_rate_ci %>%
+  mutate(
+    growth_rate2 = if_else(Year == 2004, NA, growth_rate2),
+    growth_rate2_lo = if_else(Year == 2004, NA, growth_rate2_lo),
+    growth_rate2_up = if_else(Year == 2004, NA, growth_rate2_up),
+    doubling_times = if_else(Year == 2004, NA, doubling_times),
+    halving_times = if_else(Year == 2004, NA, halving_times)
+  )
+
+
+p3<- ggplot(data = growth_rate_ci, aes(x = Year, y = growth_rate2, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  #geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  #geom_ribbon(aes(ymin = growth_rate2_lo, ymax = growth_rate2_up), alpha = 0.2) +  # Shaded area for CIs
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022))+
+  labs(title = "",
+       x = "Year",
+       y = "Growth rate (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 9, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 9, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=6),
+    axis.text.y = element_text( size=7) 
+  ) +
+  facet_wrap(~NAME, scales = "free_y")  # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "growth_ratio_mdrUS.tiff", plot = p3, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+
+
+
+
+# Plot Doubling Times
+p_doubling <- ggplot(data = growth_rate_ci, aes(x = Year, y = doubling_times, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Doubling Time (in units of time)") +
+  theme_minimal() +
+  theme(text = element_text(size = 9, family = "Times New Roman"),
+        strip.background = element_rect(fill = "white", colour = "black"),
+        strip.text = element_text(size = 9, face = "bold"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=6),
+        axis.text.y = element_text(size=7),
+        legend.position = "none") +
+  facet_wrap(~NAME, scales = "free_y")
+
+# Plot Halving Times
+p_halving <- ggplot(data = growth_rate_ci, aes(x = Year, y = halving_times, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Halving Time (in units of time)") +
+  theme_minimal() +
+  theme(text = element_text(size = 9, family = "Times New Roman"),
+        strip.background = element_rect(fill = "white", colour = "black"),
+        strip.text = element_text(size = 9, face = "bold"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=5),
+        axis.text.y = element_text(size=7),
+        legend.position = "none") +
+  facet_wrap(~NAME, scales = "free_y")
+
+
+ggsave(filename = "p_doublingUS_mdr.tiff", plot = p_doubling, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+ggsave(filename = "p_halvingUS_mdr.tiff", plot = p_halving, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+
+
+
+
+
+
+######
+
+
+#-------------------------------------------#
+###SUBGROUP ANALYSES, US states:
+#-------------------------------------------#
+######
+
+fit_gam_model_genUS <- function(state_resistance_carbap) {
+  # 1. Load Spatial Data and Resistance Data
+  states_shapefile <- states(cb = TRUE)
+  # 2. Convert 'states_shapefile' to 'sf' object if not already
+  if (!inherits(states_shapefile, "sf")) {
+    states_shapefile <- st_as_sf(states_shapefile)
+  }
+  state_resistance_carbap$NAME<- state_resistance_carbap$State
+  # 3. Merge spatial data with resistance data by 'NAME'
+  states_merged <- merge(states_shapefile, state_resistance_carbap, by = "NAME", all.x = TRUE)
+  # 4. Convert merged data to 'Spatial' object for neighborhood creation
+  states_spatial <- as(states_merged, "Spatial")
+  # 5. Create unique geometries for neighborhood structure
+  states_spatial_unique <- states_spatial[!duplicated(states_spatial$GEOID), ]
+  # 6. Remove Hawaii (GEOID "15") and Alaska (GEOID "02") from the spatial data
+  states_spatial_filtered <- states_spatial[!states_spatial$GEOID %in% c("15", "02"), ]
+  # 7. Convert to 'Spatial' object if necessary
+  if (!inherits(states_spatial_filtered, "Spatial")) {
+    states_spatial_filtered <- as(states_spatial_filtered, "Spatial")
+  }
+  # 8. Remove duplicates based on GEOID to create unique state geometries for neighborhood structure
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  # 9. Recreate the neighborhood structure using unique state geometries
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  # 10. Assign region names to the neighborhood list
+  names(nb) <- states_spatial_unique$GEOID
+  print(nb)
+  # 11. Clean and ensure data alignment with neighborhood structure
+  # Convert 'GEOID' to factor and ensure levels match the neighborhood structure
+  states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
+  # Convert 'Resistance' to numeric
+  states_spatial_filtered@data$Resistance <- as.numeric(states_spatial_filtered@data$Resistance)
+  states_spatial_filtered@data$AMR_Positive <- as.numeric(states_spatial_filtered@data$AMR_Positive)
+  states_spatial_filtered@data$Total_Isolates <- as.numeric(states_spatial_filtered@data$Total_Isolates)
+  # Convert 'Year' to numeric and handle missing data
+  states_spatial_filtered@data$Year <- as.numeric(as.character(states_spatial_filtered@data$Year))
+  states_spatial_filtered@data <- states_spatial_filtered@data[complete.cases(states_spatial_filtered@data), ]
+  # 12. Recreate neighborhood structure using the cleaned and filtered data
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  names(nb) <- states_spatial_unique$GEOID
+  # 13. Set control parameters for GAM
+  ctrl <- gam.control(nthreads = 6)  # Set parallel threads for faster computation
+  states_spatial_filtered@data$Gender <- as.factor(states_spatial_filtered@data$Gender)
+  # 14. Fit the MRF model with spatio-temporal smoothing
+  model_gamx1 <- gam(Resistance ~ 
+                       s(Year, by = Gender, m=3, k=k, bs = "tp") +  # Assuming 'Year' can support more knots
+                       s(GEOID, by = Gender, bs = 'mrf', xt = list(nb = nb)) +
+                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb)), by= Gender),  
+                     data = states_spatial_filtered@data,
+                     family = binomial, 
+                     select = TRUE,
+                     method = "REML", 
+                     weights = Total_Isolates)
+  
+  
+  return(list(fr=model_gamx1, states_spatial_filtered=states_spatial_filtered))
+}
+fit_gam_model_mdr_genUS <- function(state_resistance_carbap) {
+  # 1. Load Spatial Data and Resistance Data
+  states_shapefile <- states(cb = TRUE)
+  # 2. Convert 'states_shapefile' to 'sf' object if not already
+  if (!inherits(states_shapefile, "sf")) {
+    states_shapefile <- st_as_sf(states_shapefile)
+  }
+  state_resistance_carbap$NAME<- state_resistance_carbap$State
+  # 3. Merge spatial data with resistance data by 'NAME'
+  states_merged <- merge(states_shapefile, state_resistance_carbap, by = "NAME", all.x = TRUE)
+  # 4. Convert merged data to 'Spatial' object for neighborhood creation
+  states_spatial <- as(states_merged, "Spatial")
+  # 5. Create unique geometries for neighborhood structure
+  states_spatial_unique <- states_spatial[!duplicated(states_spatial$GEOID), ]
+  # 6. Remove Hawaii (GEOID "15") and Alaska (GEOID "02") from the spatial data
+  states_spatial_filtered <- states_spatial[!states_spatial$GEOID %in% c("15", "02"), ]
+  # 7. Convert to 'Spatial' object if necessary
+  if (!inherits(states_spatial_filtered, "Spatial")) {
+    states_spatial_filtered <- as(states_spatial_filtered, "Spatial")
+  }
+  # 8. Remove duplicates based on GEOID to create unique state geometries for neighborhood structure
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  # 9. Recreate the neighborhood structure using unique state geometries
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  # 10. Assign region names to the neighborhood list
+  names(nb) <- states_spatial_unique$GEOID
+  print(nb)
+  # 11. Clean and ensure data alignment with neighborhood structure
+  # Convert 'GEOID' to factor and ensure levels match the neighborhood structure
+  states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
+  # Convert 'Resistance' to numeric
+  states_spatial_filtered@data$MDR <- as.numeric(states_spatial_filtered@data$MDR)
+  states_spatial_filtered@data$MDR_Positive <- as.numeric(states_spatial_filtered@data$MDR_Positive)
+  states_spatial_filtered@data$Total_Isolates <- as.numeric(states_spatial_filtered@data$Total_Isolates)
+  # Convert 'Year' to numeric and handle missing data
+  states_spatial_filtered@data$Year <- as.numeric(as.character(states_spatial_filtered@data$Year))
+  states_spatial_filtered@data <- states_spatial_filtered@data[complete.cases(states_spatial_filtered@data), ]
+  # 12. Recreate neighborhood structure using the cleaned and filtered data
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  names(nb) <- states_spatial_unique$GEOID
+  # 13. Set control parameters for GAM
+  ctrl <- gam.control(nthreads = 6)  # Set parallel threads for faster computation
+  states_spatial_filtered@data$Gender<- as.factor(states_spatial_filtered@data$Gender)
+  # 14. Fit the MRF model with spatio-temporal smoothing
+  model_gamx1 <- gam(MDR ~ 
+                       s(Year, by = Gender, m=3, k=k, bs = "tp") +  # Assuming 'Year' can support more knots
+                       s(GEOID, by = Gender, bs = 'mrf', xt = list(nb = nb)) +
+                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb)), by= Gender) +
+                       Gender +  # Treat 'Gender' as a factor (categorical effect)
+                       Year:Gender,  
+                     data = states_spatial_filtered@data,
+                     family = binomial, 
+                     select = TRUE,
+                     method = "REML", 
+                     weights = Total_Isolates)
+  return(list(sf=model_gamx1,  states_spatial_filtered= states_spatial_filtered))
+}
+#OUTPUT OF THE RESULTS SPATIO-TEMPORAL MODELS:
+
+model_output_carbap_usGen <- fit_gam_model_genUS(state_resistance_carbapGen)
+model_output_cephalos_usGen <- fit_gam_model_genUS(state_resistance_cephalosGen)
+model_output_firstline_usGen <- fit_gam_model_genUS(state_resistance_firstlineGen)
+model_output_mdr_usGen <-fit_gam_model_mdr_genUS(state_resistance_mdrGen)
+
+fit_gam_model_AgegUS <- function(state_resistance_carbap) {
+  # 1. Load Spatial Data and Resistance Data
+  states_shapefile <- states(cb = TRUE)
+  # 2. Convert 'states_shapefile' to 'sf' object if not already
+  if (!inherits(states_shapefile, "sf")) {
+    states_shapefile <- st_as_sf(states_shapefile)
+  }
+  state_resistance_carbap$NAME<- state_resistance_carbap$State
+  # 3. Merge spatial data with resistance data by 'NAME'
+  states_merged <- merge(states_shapefile, state_resistance_carbap, by = "NAME", all.x = TRUE)
+  # 4. Convert merged data to 'Spatial' object for neighborhood creation
+  states_spatial <- as(states_merged, "Spatial")
+  # 5. Create unique geometries for neighborhood structure
+  states_spatial_unique <- states_spatial[!duplicated(states_spatial$GEOID), ]
+  # 6. Remove Hawaii (GEOID "15") and Alaska (GEOID "02") from the spatial data
+  states_spatial_filtered <- states_spatial[!states_spatial$GEOID %in% c("15", "02"), ]
+  # 7. Convert to 'Spatial' object if necessary
+  if (!inherits(states_spatial_filtered, "Spatial")) {
+    states_spatial_filtered <- as(states_spatial_filtered, "Spatial")
+  }
+  # 8. Remove duplicates based on GEOID to create unique state geometries for neighborhood structure
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  # 9. Recreate the neighborhood structure using unique state geometries
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  # 10. Assign region names to the neighborhood list
+  names(nb) <- states_spatial_unique$GEOID
+  print(nb)
+  # 11. Clean and ensure data alignment with neighborhood structure
+  # Convert 'GEOID' to factor and ensure levels match the neighborhood structure
+  states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
+  # Convert 'Resistance' to numeric
+  states_spatial_filtered@data$Resistance <- as.numeric(states_spatial_filtered@data$Resistance)
+  states_spatial_filtered@data$AMR_Positive <- as.numeric(states_spatial_filtered@data$AMR_Positive)
+  states_spatial_filtered@data$Total_Isolates <- as.numeric(states_spatial_filtered@data$Total_Isolates)
+  # Convert 'Year' to numeric and handle missing data
+  states_spatial_filtered@data$Year <- as.numeric(as.character(states_spatial_filtered@data$Year))
+  states_spatial_filtered@data <- states_spatial_filtered@data[complete.cases(states_spatial_filtered@data), ]
+  # 12. Recreate neighborhood structure using the cleaned and filtered data
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  names(nb) <- states_spatial_unique$GEOID
+  # 13. Set control parameters for GAM
+  ctrl <- gam.control(nthreads = 6)  # Set parallel threads for faster computation
+  states_spatial_filtered@data$Agegroup <- as.factor(states_spatial_filtered@data$Agegroup)
+  # 14. Fit the MRF model with spatio-temporal smoothing
+  model_gamx1 <- gam(Resistance ~ 
+                       s(Year, by = Agegroup, m=3, k=k, bs = "tp") +  # Assuming 'Year' can support more knots
+                       s(GEOID, by = Agegroup, bs = 'mrf', xt = list(nb = nb)) +
+                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb)), by= Agegroup),  
+                     data = states_spatial_filtered@data,
+                     family = binomial, 
+                     select = TRUE,
+                     method = "REML", 
+                     weights = Total_Isolates)
+  
+  
+  return(list(fr=model_gamx1, states_spatial_filtered=states_spatial_filtered))
+}
+fit_gam_model_mdr_AgegUS <- function(state_resistance_carbap) {
+  # 1. Load Spatial Data and Resistance Data
+  states_shapefile <- states(cb = TRUE)
+  # 2. Convert 'states_shapefile' to 'sf' object if not already
+  if (!inherits(states_shapefile, "sf")) {
+    states_shapefile <- st_as_sf(states_shapefile)
+  }
+  state_resistance_carbap$NAME<- state_resistance_carbap$State
+  # 3. Merge spatial data with resistance data by 'NAME'
+  states_merged <- merge(states_shapefile, state_resistance_carbap, by = "NAME", all.x = TRUE)
+  # 4. Convert merged data to 'Spatial' object for neighborhood creation
+  states_spatial <- as(states_merged, "Spatial")
+  # 5. Create unique geometries for neighborhood structure
+  states_spatial_unique <- states_spatial[!duplicated(states_spatial$GEOID), ]
+  # 6. Remove Hawaii (GEOID "15") and Alaska (GEOID "02") from the spatial data
+  states_spatial_filtered <- states_spatial[!states_spatial$GEOID %in% c("15", "02"), ]
+  # 7. Convert to 'Spatial' object if necessary
+  if (!inherits(states_spatial_filtered, "Spatial")) {
+    states_spatial_filtered <- as(states_spatial_filtered, "Spatial")
+  }
+  # 8. Remove duplicates based on GEOID to create unique state geometries for neighborhood structure
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  # 9. Recreate the neighborhood structure using unique state geometries
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  # 10. Assign region names to the neighborhood list
+  names(nb) <- states_spatial_unique$GEOID
+  print(nb)
+  # 11. Clean and ensure data alignment with neighborhood structure
+  # Convert 'GEOID' to factor and ensure levels match the neighborhood structure
+  states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
+  # Convert 'Resistance' to numeric
+  states_spatial_filtered@data$MDR <- as.numeric(states_spatial_filtered@data$MDR)
+  states_spatial_filtered@data$MDR_Positive <- as.numeric(states_spatial_filtered@data$MDR_Positive)
+  states_spatial_filtered@data$Total_Isolates <- as.numeric(states_spatial_filtered@data$Total_Isolates)
+  # Convert 'Year' to numeric and handle missing data
+  states_spatial_filtered@data$Year <- as.numeric(as.character(states_spatial_filtered@data$Year))
+  states_spatial_filtered@data <- states_spatial_filtered@data[complete.cases(states_spatial_filtered@data), ]
+  # 12. Recreate neighborhood structure using the cleaned and filtered data
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  names(nb) <- states_spatial_unique$GEOID
+  # 13. Set control parameters for GAM
+  ctrl <- gam.control(nthreads = 6)  # Set parallel threads for faster computation
+  states_spatial_filtered@data$Agegroup<- as.factor(states_spatial_filtered@data$Agegroup)
+  # 14. Fit the MRF model with spatio-temporal smoothing
+  model_gamx1 <- gam(MDR ~ 
+                       s(Year, by = Agegroup, m=3, k=k, bs = "tp") +  # Assuming 'Year' can support more knots
+                       s(GEOID, by = Agegroup, bs = 'mrf', xt = list(nb = nb)) +
+                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb)), by= Agegroup),  
+                     data = states_spatial_filtered@data,
+                     family = binomial, 
+                     select = TRUE,
+                     method = "REML", 
+                     weights = Total_Isolates)
+  return(list(sf=model_gamx1,  states_spatial_filtered= states_spatial_filtered))
+}
+#OUTPUT OF THE RESULTS SPATIO-TEMPORAL MODELS:
+model_output_carbap_usAgeg <- fit_gam_model_AgegUS(state_resistance_carbapAgeg)
+model_output_cephalos_usAgeg <- fit_gam_model_AgegUS(state_resistance_cephalosAgeg)
+model_output_firstline_usAgeg <- fit_gam_model_AgegUS(state_resistance_firstlineAgeg)
+model_output_mdr_usAgeg <-fit_gam_model_mdr_AgegUS(state_resistance_mdrAgeg)
+
+
+#-----Predict for GENDER --------#
+#CHECK NOW HOW TO PREDICT below for GENDER:
+original_geo_levels <- levels(final_dataset$GEOID)
+country_resistance_carbap_eu$Year <- as.numeric(as.character(country_resistance_carbap_eu$Year))
+years_range <- seq(min(country_resistance_carbap_eu$Year), max(country_resistance_carbap_eu$Year), length.out = 100)
+# Function to process data, predict, and plot results
+compute_and_plot_predictionsGen <- function(data, model_output, years_range, original_geo_levels) {
+  # Convert Year to numeric
+  data$Year <- as.numeric(as.character(data$Year))
+  
+  # Prepare new data for predictions
+  new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
+  new_data$Year <- as.numeric(as.character(new_data$Year))
+  
+  # Obtain unique geographic levels and names
+  states_data_df <- as.data.frame(model_output$states_spatial_filtered@data)
+  GEOID_nameC <- states_data_df %>%
+    dplyr::select(GEOID, NAME) %>%
+    distinct(GEOID, .keep_all = TRUE)
+  
+  # Expand prediction data to include every combination of Year and GEOID
+  genders <- c("Male", "Female")
+  pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by = 1),
+                           GEOID = unique(new_data$GEOID),
+                           Gender = genders)
+  
+  # Generate predictions using the provided GAM model
+  predictions <- gam_predictions(model_output$fr, newdata = pred_data)
+  predictions <- merge(predictions, GEOID_nameC, by = "GEOID", all.x = TRUE)
+  
+  # Merge predictions back with the main data to include gender and other variables
+  #predictions <- merge(predictions, data, by = c("Year", "GEOID"))
+  
+  # Calculate average predictions and confidence intervals by country and gender
+  predictions_summary <- predictions %>%
+    group_by(Year, Gender) %>%
+    summarise(avg_pred = mean(pred),
+              avg_pred_lower = mean(pred_lower),
+              avg_pred_upper = mean(pred_upper), .groups = 'drop')
+  
+  # Plotting the results
+  ggplot(predictions_summary, aes(x = Year, y = avg_pred, group = Gender, color = Gender)) +
+    geom_line(size = 1) +  # Make the line a bit thicker
+    geom_ribbon(aes(ymin = avg_pred_lower, ymax = avg_pred_upper, fill = Gender), alpha = 0.2, color = NA) +
+    scale_color_manual(values = c("Male" = "#1f77b4", "Female" = "#ff7f0e")) +
+    scale_fill_manual(values = c("Male" = adjustcolor("#1f77b4", alpha.f = 0.2), 
+                                 "Female" = adjustcolor("#ff7f0e", alpha.f = 0.2))) +  # Use the same colors as the lines but more transparent
+    labs(title = "",
+         subtitle = "",
+         x = "Year",
+         y = "Estimated resistance (%)") +
+    theme_minimal(base_size = 14) +  # Base font size adjustment for better readability
+    theme(legend.position = "bottom",  # Adjust legend positioning
+          legend.title = element_blank(),  # Remove legend title
+          plot.title = element_text(face = "bold", hjust = 0.5),  # Center and bold the plot title
+          plot.subtitle = element_text(hjust = 0.5),  # Center the subtitle
+          axis.text = element_text(size = 12),  # Adjust axis text size
+          axis.title = element_text(size = 11))  # Adjust axis title size
+  #View(predictions_summary)
+}
+compute_and_plot_predictionsGenmdr <- function(data, model_output, years_range, original_geo_levels) {
+  # Convert Year to numeric
+  data$Year <- as.numeric(as.character(data$Year))
+  
+  # Prepare new data for predictions
+  new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
+  new_data$Year <- as.numeric(as.character(new_data$Year))
+  
+  # Obtain unique geographic levels and names
+  states_data_df <- as.data.frame(model_output$states_spatial_filtered@data)
+  GEOID_nameC <- states_data_df %>%
+    dplyr::select(GEOID, NAME) %>%
+    distinct(GEOID, .keep_all = TRUE)
+  
+  # Expand prediction data to include every combination of Year and GEOID
+  genders <- c("Male", "Female")
+  pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by = 1),
+                           GEOID = unique(new_data$GEOID),
+                           Gender = genders)
+  
+  # Generate predictions using the provided GAM model
+  predictions <- gam_predictions(model_output$sf, newdata = pred_data)
+  predictions <- merge(predictions, GEOID_nameC, by = "GEOID", all.x = TRUE)
+  
+  # Merge predictions back with the main data to include gender and other variables
+  #predictions <- merge(predictions, data, by = c("Year", "GEOID"))
+  
+  # Calculate average predictions and confidence intervals by country and gender
+  predictions_summary <- predictions %>%
+    group_by(Year, Gender) %>%
+    summarise(avg_pred = mean(pred),
+              avg_pred_lower = mean(pred_lower),
+              avg_pred_upper = mean(pred_upper), .groups = 'drop')
+  
+  # Plotting the results
+  ggplot(predictions_summary, aes(x = Year, y = avg_pred, group = Gender, color = Gender)) +
+    geom_line(size = 1) +  # Make the line a bit thicker
+    geom_ribbon(aes(ymin = avg_pred_lower, ymax = avg_pred_upper, fill = Gender), alpha = 0.2, color = NA) +
+    scale_color_manual(values = c("Male" = "#1f77b4", "Female" = "#ff7f0e")) +
+    scale_fill_manual(values = c("Male" = adjustcolor("#1f77b4", alpha.f = 0.2), 
+                                 "Female" = adjustcolor("#ff7f0e", alpha.f = 0.2))) +  # Use the same colors as the lines but more transparent
+    labs(title = "",
+         subtitle = "",
+         x = "Year",
+         y = "Estimated resistance (%)") +
+    theme_minimal(base_size = 14) +  # Base font size adjustment for better readability
+    theme(legend.position = "bottom",  # Adjust legend positioning
+          legend.title = element_blank(),  # Remove legend title
+          plot.title = element_text(face = "bold", hjust = 0.5),  # Center and bold the plot title
+          plot.subtitle = element_text(hjust = 0.5),  # Center the subtitle
+          axis.text = element_text(size = 12),  # Adjust axis text size
+          axis.title = element_text(size = 11))  # Adjust axis title size
+  
+}
+
+plot_resultGen_carb_US <- compute_and_plot_predictionsGen(state_resistance_carbapGen, model_output_carbap_usGen, years_range, original_geo_levels)
+plot_resultGen_carb_US <- plot_resultGen_carb_US + ylab("Carbapenem-resistance (%)")
+plot_resultGen_cephalos_US <- compute_and_plot_predictionsGen(state_resistance_cephalosGen, model_output_cephalos_usGen, years_range, original_geo_levels)
+plot_resultGen_cephalos_US <- plot_resultGen_cephalos_US  + ylab("3rd generation cephalosporin-resistance (%)")
+plot_resultGen_firstline_US <- compute_and_plot_predictionsGen(state_resistance_firstlineGen, model_output_firstline_usGen, years_range, original_geo_levels)
+plot_resultGen_firstline_US <- plot_resultGen_firstline_US + ylab("First-line antibiotic-resistance (%)")
+plot_resultGen_mdr_US <- compute_and_plot_predictionsGenmdr(state_resistance_mdrGen, model_output_mdr_usGen, years_range, original_geo_levels)
+plot_resultGen_mdr_US <- plot_resultGen_mdr_US + ylab("Multidrug resistance (%)")
+
+# Arrange the plots
+combined_plotki <- (plot_resultGen_mdr_US + plot_resultGen_firstline_US) /
+  (plot_resultGen_cephalos_US + plot_resultGen_carb_US)
+# Collect the guides and add tags
+combined_plotki <- combined_plotki + 
+  plot_layout(guides = 'collect') +
+  plot_annotation(tag_levels = 'A',
+                  tag_prefix = "", 
+                  tag_suffix = ".")
+# Modify legend position and theme settings for clarity
+combined_plotki <- combined_plotki & theme(
+  legend.position = "bottom",
+  legend.justification = "center",
+  legend.box.background = element_rect(color = "white", linetype = "solid"),
+  legend.background = element_rect(fill = "white", color = NA),
+  plot.margin = unit(c(0,0,0,0), "lines")
+)
+ggsave(filename = "predictions_gender_US.tiff", plot = combined_plotki, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+#-----Predict for Agegroups --------#
+#CHECK NOW HOW TO PREDICT below for Agegroup:
+original_geo_levels <- levels(final_dataset$GEOID)
+country_resistance_carbap_eu$Year <- as.numeric(as.character(country_resistance_carbap_eu$Year))
+years_range <- seq(min(country_resistance_carbap_eu$Year), max(country_resistance_carbap_eu$Year), length.out = 100)
+# Function to process data, predict, and plot results
+compute_and_plot_predictionsAgeg <- function(data, model_output, years_range, original_geo_levels) {
+  # Convert Year to numeric
+  data$Year <- as.numeric(as.character(data$Year))
+  
+  # Prepare new data for predictions
+  new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
+  new_data$Year <- as.numeric(as.character(new_data$Year))
+  
+  # Obtain unique geographic levels and names
+  states_data_df <- as.data.frame(model_output$states_spatial_filtered@data)
+  GEOID_nameC <- states_data_df %>%
+    dplyr::select(GEOID, NAME) %>%
+    distinct(GEOID, .keep_all = TRUE)
+  
+  # Expand prediction data to include every combination of Year and GEOID
+  agegroups <- c(0, 1, 2)
+  new_data$Year <- as.numeric(as.character(new_data$Year))
+  pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by = 1),
+                           GEOID = unique(new_data$GEOID),
+                           Agegroup = agegroups)
+  
+  # Generate predictions using the provided GAM model
+  predictions <- gam_predictions(model_output$fr, newdata = pred_data)
+  predictions <- merge(predictions, GEOID_nameC, by = "GEOID", all.x = TRUE)
+  
+  # Merge predictions back with the main data to include gender and other variables
+  #predictions <- merge(predictions, data, by = c("Year", "GEOID"))
+  
+  # Calculate average predictions and confidence intervals by country and gender
+  predictions_summary <- predictions %>%
+    group_by(Year, Agegroup) %>%
+    summarise(avg_pred = mean(pred),
+              avg_pred_lower = mean(pred_lower),
+              avg_pred_upper = mean(pred_upper), .groups = 'drop')
+  
+  predictions_summary$Agegroup <- factor(predictions_summary$Agegroup)
+  predictions_summary$Agegroup <- factor(predictions_summary$Agegroup,
+                                         levels = c("0", "1", "2"),
+                                         labels = c("≤18yo", "19≤ and ≤64", "≥65"))
+  # Now create the plot
+  ggplot(predictions_summary, aes(x = Year, y = avg_pred, group = Agegroup, color = Agegroup)) +
+    geom_line(size = 1) +  # Make the line a bit thicker
+    geom_ribbon(aes(ymin = avg_pred_lower, ymax = avg_pred_upper, fill = Agegroup), alpha = 0.2, color = NA) +
+    scale_color_manual(values = c("≤18yo" = "#1f77b4", "19≤ and ≤64" = "#ff9f8e", "≥65" = "#FDFD96")) +
+    scale_fill_manual(values = c("≤18yo" = adjustcolor("#1f77b4", alpha.f = 0.2), 
+                                 "19≤ and ≤64" = adjustcolor("#ff9f8e", alpha.f = 0.2),
+                                 "≥65" = adjustcolor("#FDFD96", alpha.f = 0.2))) +
+    labs(title = "",
+         subtitle = "",
+         x = "Year",
+         y = "Estimated resistance (%)") +
+    theme_minimal(base_size = 14) +  # Base font size adjustment for better readability
+    theme(legend.position = "bottom",  # Adjust legend positioning
+          legend.title = element_blank(),  # Remove legend title
+          plot.title = element_text(face = "bold", hjust = 0.5),  # Center and bold the plot title
+          plot.subtitle = element_text(hjust = 0.5),  # Center the subtitle
+          axis.text = element_text(size = 12),  # Adjust axis text size
+          axis.title = element_text(size = 11))  # Adjust axis title size
+  #View(predictions_summary)
+}
+compute_and_plot_predictionsAgegmdr <- function(data, model_output, years_range, original_geo_levels) {
+  # Convert Year to numeric
+  data$Year <- as.numeric(as.character(data$Year))
+  
+  # Prepare new data for predictions
+  new_data <- expand.grid(Year = years_range, GEOID = original_geo_levels)
+  new_data$Year <- as.numeric(as.character(new_data$Year))
+  
+  # Obtain unique geographic levels and names
+  states_data_df <- as.data.frame(model_output$states_spatial_filtered@data)
+  GEOID_nameC <- states_data_df %>%
+    dplyr::select(GEOID, NAME) %>%
+    distinct(GEOID, .keep_all = TRUE)
+  
+  # Expand prediction data to include every combination of Year and GEOID
+  agegroups <- c(0, 1, 2)
+  pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by = 1),
+                           GEOID = unique(new_data$GEOID),
+                           Agegroup = agegroups)
+  
+  # Generate predictions using the provided GAM model
+  predictions <- gam_predictions(model_output$sf, newdata = pred_data)
+  predictions <- merge(predictions, GEOID_nameC, by = "GEOID", all.x = TRUE)
+  
+  # Merge predictions back with the main data to include gender and other variables
+  #predictions <- merge(predictions, data, by = c("Year", "GEOID"))
+  
+  # Calculate average predictions and confidence intervals by country and gender
+  predictions_summary <- predictions %>%
+    group_by(Year, Agegroup) %>%
+    summarise(avg_pred = mean(pred),
+              avg_pred_lower = mean(pred_lower),
+              avg_pred_upper = mean(pred_upper), .groups = 'drop')
+  predictions_summary$Agegroup <- factor(predictions_summary$Agegroup,
+                                         levels = c("0", "1", "2"),
+                                         labels = c("≤18yo", "19≤ and ≤64", "≥65"))
+  # Plotting the results
+  
+  ggplot(predictions_summary, aes(x = Year, y = avg_pred, group = Agegroup, color = Agegroup)) +
+    geom_line(size = 1) +  # Make the line a bit thicker
+    geom_ribbon(aes(ymin = avg_pred_lower, ymax = avg_pred_upper, fill = Agegroup), alpha = 0.2, color = NA) +
+    scale_color_manual(values = c("≤18yo" = "#1f77b4", "19≤ and ≤64" = "#ff9f8e", "≥65" = "#FDFD96")) +
+    scale_fill_manual(values = c("≤18yo" = adjustcolor("#1f77b4", alpha.f = 0.2), 
+                                 "19≤ and ≤64" = adjustcolor("#ff9f8e", alpha.f = 0.2),
+                                 "≥65" = adjustcolor("#FDFD96", alpha.f = 0.2))) +
+    labs(title = "",
+         subtitle = "",
+         x = "Year",
+         y = "Estimated resistance (%)") +
+    theme_minimal(base_size = 14) +  # Base font size adjustment for better readability
+    theme(legend.position = "bottom",  # Adjust legend positioning
+          legend.title = element_blank(),  # Remove legend title
+          plot.title = element_text(face = "bold", hjust = 0.5),  # Center and bold the plot title
+          plot.subtitle = element_text(hjust = 0.5),  # Center the subtitle
+          axis.text = element_text(size = 12),  # Adjust axis text size
+          axis.title = element_text(size = 11))  # Adjust axis title size
+  
+  
+}
+
+plot_resultAgeg_carb_US <- compute_and_plot_predictionsAgeg(state_resistance_carbapAgeg, model_output_carbap_usAgeg, years_range, original_geo_levels)
+plot_resultAgeg_carb_US <- plot_resultAgeg_carb_US + ylab("Carbapenem-resistance (%)")
+plot_resultAgeg_cephalos_US <- compute_and_plot_predictionsAgeg(state_resistance_cephalosAgeg, model_output_cephalos_usAgeg, years_range, original_geo_levels)
+plot_resultAgeg_cephalos_US <- plot_resultAgeg_cephalos_US  + ylab("3rd generation cephalosporin-resistance (%)")
+plot_resultAgeg_firstline_US <- compute_and_plot_predictionsAgeg(state_resistance_firstlineAgeg, model_output_firstline_usAgeg, years_range, original_geo_levels)
+plot_resultAgeg_firstline_US <- plot_resultAgeg_firstline_US + ylab("First-line antibiotic-resistance (%)")
+plot_resultAgeg_mdr_US <- compute_and_plot_predictionsAgegmdr(state_resistance_mdrAgeg, model_output_mdr_usAgeg, years_range, original_geo_levels)
+plot_resultAgeg_mdr_US <- plot_resultAgeg_mdr_US + ylab("Multidrug resistance (%)")
+
+# Arrange the plots
+combined_plotki2 <- (plot_resultAgeg_mdr_US + plot_resultAgeg_firstline_US) /
+  (plot_resultAgeg_cephalos_US + plot_resultAgeg_carb_US)
+# Collect the guides and add tags
+combined_plotki2 <- combined_plotki2 + 
+  plot_layout(guides = 'collect') +
+  plot_annotation(tag_levels = 'A',
+                  tag_prefix = "", 
+                  tag_suffix = ".")
+# Modify legend position and theme settings for clarity
+combined_plotki2 <- combined_plotki2 & theme(
+  legend.position = "bottom",
+  legend.justification = "center",
+  legend.box.background = element_rect(color = "white", linetype = "solid"),
+  legend.background = element_rect(fill = "white", color = NA),
+  plot.margin = unit(c(0,0,0,0), "lines")
+)
+ggsave(filename = "predictions_Agegroup_US.tiff", plot = combined_plotki2, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+
+#----------------------------------------------------------------#
+#Table outputs: 
+
+model_output_carbap_usGen2 <- model_output_carbap_usGen$fr
+model_output_cephalos_usGen2<- model_output_cephalos_usGen$fr
+model_output_firstline_usGen2<- model_output_firstline_usGen$fr
+model_output_mdr_usGen2 <- model_output_mdr_usGen$sf
+
+model_output_carbap_usAgeg2 <- model_output_carbap_usAgeg$fr
+model_output_cephalos_usAgeg2<- model_output_cephalos_usAgeg$fr
+model_output_firstline_usAgeg2<- model_output_firstline_usAgeg$fr
+model_output_mdr_usAgeg2 <- model_output_mdr_usAgeg$sf
+
+# Apply the function to each model
+summary_carbap_us <- extract_model_summary(model_output_carbap_usGen2)
+summary_cephalos_us <- extract_model_summary(model_output_cephalos_usGen2)
+summary_firstline_us <- extract_model_summary(model_output_firstline_usGen2)
+summary_mdr_us <- extract_model_summary(model_output_mdr_usGen2)
+
+summary_carbap_us2 <- extract_model_summary(model_output_carbap_usAgeg2)
+summary_cephalos_us2 <- extract_model_summary(model_output_cephalos_usAgeg2)
+summary_firstline_us2 <- extract_model_summary(model_output_firstline_usAgeg2)
+summary_mdr_us2 <- extract_model_summary(model_output_mdr_usAgeg2)
+
+# Adding model identifiers
+summary_carbap_us$model <- "Carbapenem Resistance"
+summary_cephalos_us$model <- "Cephalosporin Resistance"
+summary_firstline_us$model <- "First-line Antibiotic Resistance"
+summary_mdr_us$model <- "MDR Resistance"
+summary_carbap_us2$model <- "Carbapenem Resistance"
+summary_cephalos_us2$model <- "Cephalosporin Resistance"
+summary_firstline_us2$model <- "First-line Antibiotic Resistance"
+summary_mdr_us2$model <- "MDR Resistance"
+# Combining all summaries into one dataframe
+combined_results_us <- bind_rows(summary_carbap_us, summary_cephalos_us, summary_firstline_us, summary_mdr_us, summary_carbap_us2, summary_cephalos_us2, summary_firstline_us2, summary_mdr_us2)
+# Optionally, select and rename columns for clarity
+final_results_us2_genage <- combined_results_us %>%
+  dplyr::select(Model = model, Term = term, Estimate = estimate, EDF = edf, Ref.DF = ref.df, Std.Error = std.error,
+                Statistic = statistic, `P.Value` = p.value)
+######
+
+
+#------------------------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------------------------#
+# Analyses for EUROPE
+#------------------------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------------------------#
+#country_resistance_carbap_eu country_resistance_cephalos_eu country_resistance_firstline_eu country_resistance_mdr_eu
+
+#------------------------------------------------------------------------------------------------------#
+# Analyses for Europe GAM SPATIOTEMPORAL 
+#------------------------------------------------------------------------------------------------------#
+######
+# Load Spatial Data and Resistance Data
+k=6
+fit_gam_model_eu <- function(state_resistance_carbap) {
+  europe_shapefile <- ne_countries(continent = "Europe", returnclass = "sf")
+  europe_shapefile <- st_make_valid(europe_shapefile)
+  # Rename and modify sovereignt to NAME
+  europe_shapefile <- mutate(europe_shapefile, NAME = sovereignt)
+  europe_shapefile <- mutate(europe_shapefile,
+                             NAME = case_when(
+                               NAME == "Slovakia" ~ "Slovak Republic",
+                               NAME == "Republic of Serbia" ~ "Serbia",
+                               NAME == "Czechia" ~ "Czech Republic",
+                               TRUE ~ NAME
+                             ))
+  
+  # Ensure all geometries are valid
+  states_shapefile<-europe_shapefile
+  state_resistance_carbap$NAME<- state_resistance_carbap$Country
+  state_resistance_carbap <- state_resistance_carbap %>%
+    filter(NAME != "Turkey") 
+    # Merge spatial data with resistance data by 'NAME'
+  states_merged <- merge(states_shapefile, state_resistance_carbap, by = "NAME", all.x = TRUE)
+  
+  # Create unique geometries for neighborhood structure
+  states_spatial_unique <- states_merged[!duplicated(states_merged$NAME), ]
+  #states_spatial_unique$GEOID <- as.numeric(factor(states_spatial_unique$NAME))
+  
+  # Merge to append the GEOID corresponding to each NAME
+  #states_spatial <- st_join(states_merged, states_spatial_unique[, c("NAME", "GEOID")])
+  #states_spatial <- states_spatial %>%
+  #  rename(NAME = NAME.x) %>%
+  #  dplyr::select(-NAME.y)
+  # Remove countries not included in countries_list_eu_includ
+  states_spatial_filtered <- states_merged %>%
+    dplyr::filter(NAME %in% countries_list_eu_includ)
+  
+  states_spatial_filtered <- states_spatial_filtered %>%
+    mutate(
+      GEOID = as.numeric(factor(NAME, levels = unique(NAME)))
+    )
+  
+  if (!inherits(states_spatial_filtered, "Spatial")) {
+    states_spatial_filtered <- as(states_spatial_filtered, "Spatial")
+  }
+  
+  
+  # 8. Remove duplicates based on GEOID to create unique state geometries for neighborhood structure
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  # 9. Recreate the neighborhood structure using unique state geometries
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  # 10. Assign region names to the neighborhood list
+  names(nb) <- states_spatial_unique$GEOID
+  
+  # Clean and ensure data alignment with neighborhood structure
+  states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
+  states_spatial_filtered@data$Resistance <- as.numeric(states_spatial_filtered@data$Resistance)
+  states_spatial_filtered@data$AMR_Positive <- as.numeric(states_spatial_filtered@data$AMR_Positive)
+  states_spatial_filtered@data$Total_Isolates <- as.numeric(states_spatial_filtered@data$Total_Isolates)
+  states_spatial_filtered@data$Year <- as.numeric(as.character(states_spatial_filtered@data$Year))
+  #states_spatial_filtered@data <- states_spatial_filtered@data[complete.cases(states_spatial_filtered@data), ]
+  
+  # Set control parameters for GAM
+  ctrl <- gam.control(nthreads = 6)  # Set parallel threads for faster computation
+  
+  # Fit the MRF model with spatio-temporal smoothing
+  model_gamx1 <- gam(Resistance ~ 
+                       s(Year, m=3, k=k, bs = "tp") +
+                       s(GEOID, bs = 'mrf', xt = list(nb = nb)) +
+                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb))),
+                     data = states_spatial_filtered@data,
+                     family = binomial,
+                     select = TRUE,
+                     method = "REML", 
+                     weights = Total_Isolates)
+  return(list(fr=model_gamx1, states_spatial_filtered=states_spatial_filtered))
+}
+fit_gam_model_mdr_eu <- function(state_resistance_carbap) {
+  # Load Spatial Data and Resistance Data
+  europe_shapefile <- ne_countries(continent = "Europe", returnclass = "sf")
+  europe_shapefile <- st_make_valid(europe_shapefile)
+  # Rename and modify sovereignt to NAME
+  europe_shapefile <- mutate(europe_shapefile, NAME = sovereignt)
+  europe_shapefile <- mutate(europe_shapefile,
+                             NAME = case_when(
+                               NAME == "Slovakia" ~ "Slovak Republic",
+                               NAME == "Republic of Serbia" ~ "Serbia",
+                               NAME == "Czechia" ~ "Czech Republic",
+                               TRUE ~ NAME
+                             ))
+  
+  # Ensure all geometries are valid
+  states_shapefile<-europe_shapefile
+  state_resistance_carbap$NAME<- state_resistance_carbap$Country
+  state_resistance_carbap <- state_resistance_carbap %>%
+    filter(NAME != "Turkey") 
+  # Merge spatial data with resistance data by 'NAME'
+  states_merged <- merge(states_shapefile, state_resistance_carbap, by = "NAME", all.x = TRUE)
+  
+  # Create unique geometries for neighborhood structure
+  states_spatial_unique <- states_merged[!duplicated(states_merged$NAME), ]
+  #states_spatial_unique$GEOID <- as.numeric(factor(states_spatial_unique$NAME))
+  
+  # Merge to append the GEOID corresponding to each NAME
+  #states_spatial <- st_join(states_merged, states_spatial_unique[, c("NAME", "GEOID")])
+  #states_spatial <- states_spatial %>%
+  #  rename(NAME = NAME.x) %>%
+  #  dplyr::select(-NAME.y)
+  # Remove countries not included in countries_list_eu_includ
+  countries_list_eu_includ <- c(
+    "Austria", "Belgium", "Bulgaria", "Croatia", "Czech Republic",
+    "Denmark","Finland", "France", "Germany",
+    "Greece", "Hungary", "Ireland", "Italy", "Latvia",
+    "Lithuania", "Netherlands", "Poland", "Portugal",
+    "Romania", "Russia", "Slovak Republic", "Slovenia",
+    "Spain", "Sweden", "Switzerland", "Ukraine",
+    "United Kingdom"
+  )
+  countries_list_eu_includ <- c(
+    "Austria", "Belgium", "Croatia", "Czech Republic",
+    "Denmark", "Finland", "France", "Germany",
+    "Greece", "Hungary", "Ireland", "Italy", "Latvia",
+    "Lithuania", "Netherlands", "Poland", "Portugal",
+    "Romania",  "Slovak Republic", "Slovenia",
+    "Spain", "Sweden", "Switzerland",
+    "United Kingdom"
+  )
+  states_spatial_filtered <- states_merged %>%
+    dplyr::filter(NAME %in% countries_list_eu_includ)
+  
+  states_spatial_filtered <- states_spatial_filtered %>%
+    mutate(
+      GEOID = as.numeric(factor(NAME, levels = unique(NAME)))
+    )
+  
+  if (!inherits(states_spatial_filtered, "Spatial")) {
+    states_spatial_filtered <- as(states_spatial_filtered, "Spatial")
+  }
+  
+  
+  # 8. Remove duplicates based on GEOID to create unique state geometries for neighborhood structure
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  # 9. Recreate the neighborhood structure using unique state geometries
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  # 10. Assign region names to the neighborhood list
+  names(nb) <- states_spatial_unique$GEOID
+
+  # 11. Clean and ensure data alignment with neighborhood structure
+  # Convert 'GEOID' to factor and ensure levels match the neighborhood structure
+  states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
+  # Convert 'Resistance' to numeric
+  states_spatial_filtered@data$MDR <- as.numeric(states_spatial_filtered@data$MDR)
+  states_spatial_filtered@data$MDR_Positive <- as.numeric(states_spatial_filtered@data$MDR_Positive)
+  states_spatial_filtered@data$Total_Isolates <- as.numeric(states_spatial_filtered@data$Total_Isolates)
+  # Convert 'Year' to numeric and handle missing data
+  states_spatial_filtered@data$Year <- as.numeric(as.character(states_spatial_filtered@data$Year))
+  # 12. Recreate neighborhood structure using the cleaned and filtered data
+  states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+  nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+  names(nb) <- states_spatial_unique$GEOID
+  
+  # 13. Set control parameters for GAM
+  ctrl <- gam.control(nthreads = 6)  # Set parallel threads for faster computation
+  # 14. Fit the MRF model with spatio-temporal smoothing
+  model_gamx1 <- gam(MDR ~ 
+                       s(Year, m=3, k=k, bs = "tp") +   # Smooth term for Year
+                       s(GEOID, bs = 'mrf', xt = list(nb = nb)) +  # Smooth term for GEOID
+                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb))), # Interaction term
+                     data = states_spatial_filtered@data,
+                     family = binomial, 
+                     select = TRUE,
+                     method = "REML", 
+                     weights = Total_Isolates)
+  return(list(sf=model_gamx1,  states_spatial_filtered= states_spatial_filtered))
+}
+
+#OUTPUT OF THE RESULTS SPATIO-TEMPORAL MODELS:
+model_output_carbap_eu <- fit_gam_model_eu(country_resistance_carbap_eu)
+model_output_carbap_eu <- model_output_carbap_eu$fr
+model_output_cephalos_eu <- fit_gam_model_eu(country_resistance_cephalos_eu)
+model_output_cephalos_eu<- model_output_cephalos_eu$fr
+model_output_firstline_eu <- fit_gam_model_eu(country_resistance_firstline_eu)
+model_output_firstline_eu<- model_output_firstline_eu$fr
+model_output_mdr_eu <-fit_gam_model_mdr_eu(country_resistance_mdr_eu)
+model_output_mdr_eu <- model_output_mdr_eu$sf
+
+# Tidying model outputs
+extract_model_summary_eu <- function(model) {
+  # Extracting smooth terms
+  smooth_summary <- tidy(model, parametric = FALSE)
+  
+  # Extracting parametric coefficients
+  parametric_summary <- tidy(model, exponentiate = FALSE, parametric = TRUE)
+  
+  # Combine both summaries
+  combined_summary <- bind_rows(parametric_summary, smooth_summary)
+  
+  return(combined_summary)
+}
+
+# Apply the function to each model
+summary_carbap_eu <- extract_model_summary_eu(model_output_carbap_eu)
+summary_cephalos_eu <- extract_model_summary_eu(model_output_cephalos_eu)
+summary_firstline_eu <- extract_model_summary_eu(model_output_firstline_eu)
+summary_mdr_eu <- extract_model_summary_eu(model_output_mdr_eu)
+
+# Adding model identifiers
+summary_carbap_eu$model <- "Carbapenem Resistance"
+summary_cephalos_eu$model <- "Cephalosporin Resistance"
+summary_firstline_eu$model <- "First-line Antibiotic Resistance"
+summary_mdr_eu$model <- "MDR Resistance"
+# Combining all summaries into one dataframe
+combined_results_eu <- bind_rows(summary_carbap_eu, summary_cephalos_eu, summary_firstline_eu, summary_mdr_eu)
+# Optionally, select and rename columns for clarity
+final_results_eu <- combined_results_eu %>%
+  dplyr::select(Model = model, Term = term, Estimate = estimate, EDF = edf, Ref.DF = ref.df, Std.Error = std.error,
+                Statistic = statistic, `P.Value` = p.value)
+
+######
+
+#-------------------------------------------------------------------------#
+###FIRST/SECOND-derivative & GROWTH rate/DOUBLING/HALVING GRAPHS, Europe:
+#-------------------------------------------------------------------------#
 #------------------------------------------------------------------------------#
 #NEW, CARBAPENEM RESISTANCE GRAPH: ######
 country_resistance_carbap_eu <- country_resistance_carbap_eu%>%
@@ -3479,7 +5856,7 @@ p <- ggplot(data = merged_data, aes(x = Year, y = first_derivative, group = NAME
   scale_fill_manual(values = palette) +
   labs(title = "",
        x = "Year",
-       y = "First derivative (%)") +
+       y = "First derivative ") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -3488,7 +5865,7 @@ p <- ggplot(data = merged_data, aes(x = Year, y = first_derivative, group = NAME
     strip.background = element_rect(fill = "white", color = "black"),
     strip.text = element_text(size = 14, face = "bold"),
     legend.position = "none",
-    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1, size=7)
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7)
   ) +
   facet_wrap(~NAME, scales = "free_y")   # Apply the same y-axis limits to all facets
 
@@ -3515,7 +5892,7 @@ ppred <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
   scale_y_continuous(limits = c(0, max_y + 0), breaks = seq(0, max_y + 0, by = 5)) +
   labs(title = "",
        x = "Year",
-       y = "Predicted Carbapenem-Resistance (%)") +
+       y = "Estimated carbapenem-resistance (%)") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -3524,7 +5901,7 @@ ppred <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
     strip.background = element_rect(fill = "white", color = "black"),
     strip.text = element_text(size = 14, face = "bold"),
     legend.position = "none",
-    axis.text.x = element_text(angle = 45, hjust = 1)
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7)
   )
 # Display the plot
 print(ppred)
@@ -3533,9 +5910,9 @@ ggsave(filename = "predictions_breakpoint_carb.tiff", plot = ppred, device = "ti
 
 
 netherlands_predictions <- predictions %>%
-  filter(NAME == "Netherlands")
+  filter(NAME == "France")
 merged_datanetherlands <- merged_data %>%
-  filter(NAME == "Netherlands")
+  filter(NAME == "France")
 netherlands_plot<-ggplot(data = netherlands_predictions, aes(x = Year, y = pred)) +
   geom_line(aes(color = NAME), size = 1) +
   geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper), alpha = 0.2) +
@@ -3547,10 +5924,10 @@ netherlands_plot<-ggplot(data = netherlands_predictions, aes(x = Year, y = pred)
   scale_color_manual(values = palette) +
   scale_fill_manual(values = palette) +
   scale_x_continuous(breaks = seq(min(predictions$Year), max(predictions$Year), by = 1)) +
-  scale_y_continuous(limits = c(0, 25 + 0), breaks = seq(0, 25 + 0, by = 5)) +
+  scale_y_continuous(limits = c(0, 14 + 0), breaks = seq(0, 14 + 0, by = 2)) +
   labs(title = "",
        x = "Year",
-       y = "Predicted carbapenem-resistance (%)") +
+       y = "Estimated carbapenem-resistance (%)") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -3608,7 +5985,7 @@ ppred_alle <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) 
   scale_y_continuous(breaks = seq(0, 40, by = 5))+
   labs(title = "",
        x = "Year",
-       y = "Predicted carbapenem-resistance (%)") +
+       y = "Estimated carbapenem-resistance (%)") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -3663,22 +6040,63 @@ if (num_colors > 8) {
 final_palette <- setNames(palette_colors, unique_names)
 # Create the plot
 ppred_alle2x <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
-  geom_line(aes(color = color), size = 1, na.rm = TRUE) +  # Ensure NA values in color are ignored
-  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  geom_line(aes(color = color), size = 1.4, alpha = 1.9, na.rm = TRUE) +  # Thicker, less transparent lines
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.03) +
   scale_color_manual(values = final_palette, na.translate = FALSE) +
-  scale_fill_manual(values = final_palette, guide = "none") +  # Make sure there is a plus sign at the end
+  scale_fill_manual(values = final_palette, guide = "none") +  
   scale_x_continuous(
     breaks = seq(from = 2004, to = 2022, by = 4),
-    limits = c(2004, 2022)  # Closing parenthesis for limits
+    limits = c(2004, 2022)  
   ) +  # Closing parenthesis was missing after 2022
   scale_y_continuous(
     limits = c(min(predictions$pred_lower, na.rm = TRUE) - 0, 
                max(predictions$pred_upper, na.rm = TRUE) + 0), 
     breaks = seq(0, 35, by = 5)
   ) +
-  labs(title = "C. Predicted CRE (%)",
+  labs(title = "C. Estimated CRE (%)",
        x = "Year",
-       y = "Predicted carbapenem-resistance (%)") +
+       y = "Estimated carbapenem-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 360, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  ) 
+
+
+# Print the plot
+print(ppred_alle2x)
+
+
+ggsave(filename = "pred_allEurop_toget_carb.tiff", plot = ppred_alle, device = "tiff", path = base_pathOut,
+       width = 16, height = 10, dpi = 500, units = "in")
+
+
+
+ppred_alle2x122 <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  geom_line(aes(color = ifelse(NAME == "Netherlands", "black", color), size = ifelse(NAME == "Netherlands", 2, 1)), na.rm = TRUE) +
+  scale_color_manual(values = c(final_palette, "black" = "black"), na.translate = FALSE) +
+  scale_fill_manual(values = final_palette, guide = "none") +
+  scale_x_continuous(
+    breaks = seq(from = 2004, to = 2022, by = 4),
+    limits = c(2004, 2022)
+  ) +
+  scale_y_continuous(
+    limits = c(min(predictions$pred_lower, na.rm = TRUE), 
+               max(predictions$pred_upper, na.rm = TRUE)),
+    breaks = seq(0, 35, by = 5)
+  ) +
+  labs(title = "C. Estimated CRE (%)",
+       x = "Year",
+       y = "Estimated carbapenem-resistance (%)") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -3694,11 +6112,9 @@ ppred_alle2x <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)
   )
 
 # Print the plot
-print(ppred_alle2x)
+print(ppred_alle2x122)
 
 
-ggsave(filename = "pred_allEurop_toget_carb.tiff", plot = ppred_alle, device = "tiff", path = base_pathOut,
-       width = 16, height = 10, dpi = 500, units = "in")
 
 #-----------------------------#
 # Plotting SECOND DERIVATIVE:
@@ -3724,9 +6140,10 @@ p2<- ggplot(data = merged_data, aes(x = Year, y = second_derivative, group = NAM
   geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
   scale_color_manual(values = palette) +  # Assuming palette is predefined
   scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022) +
   labs(title = "",
        x = "Year",
-       y = "Second derivative (%)") +
+       y = "Second derivative") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -3734,6 +6151,7 @@ p2<- ggplot(data = merged_data, aes(x = Year, y = second_derivative, group = NAM
     panel.grid.minor = element_blank(),
     strip.background = element_rect(fill = "white", color = "black"),
     strip.text = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7),
     legend.position = "none"
   ) +
   facet_wrap(~NAME, scales = "free_y") #+
@@ -3757,14 +6175,19 @@ p2netherl<- ggplot(data = merged_datanetherlands, aes(x = Year, y = second_deriv
   scale_fill_manual(values = palette) +
   labs(title = "",
        x = "Year",
-       y = "Second derivative (%)") +
+       y = "Second derivative") +
   theme_minimal() +
+  scale_x_continuous(
+    breaks = seq(from = 2004, to = 2022, by = 1),
+    limits = c(2004, 2022)  # Closing parenthesis for limits
+  )+
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     strip.background = element_rect(fill = "white", color = "black"),
     strip.text = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
     legend.position = "none"
   ) +
   facet_wrap(~NAME, scales = "free_y")
@@ -3808,10 +6231,11 @@ p3<- ggplot(data = growth_rate_ci, aes(x = Year, y = growth_rate2, group = NAME)
              aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
   geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
              aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
-  geom_ribbon(aes(ymin = growth_rate2_lo, ymax = growth_rate2_up), alpha = 0.2) +  # Shaded area for CIs
+  #geom_ribbon(aes(ymin = growth_rate2_lo, ymax = growth_rate2_up), alpha = 0.2) +  # Shaded area for CIs
   geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
   scale_color_manual(values = palette) +  # Assuming palette is predefined
   scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022))+
   labs(title = "",
        x = "Year",
        y = "Growth rate (%)") +
@@ -3823,8 +6247,7 @@ p3<- ggplot(data = growth_rate_ci, aes(x = Year, y = growth_rate2, group = NAME)
     strip.background = element_rect(fill = "white", color = "black"),
     strip.text = element_text(size = 14, face = "bold"),
     legend.position = "none",
-    scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022)),
-    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7) 
   ) +
   facet_wrap(~NAME, scales = "free_y")  # Apply the same y-axis limits to all facets
 
@@ -3834,11 +6257,12 @@ ggsave(filename = "growth_ratio_carbEU.tiff", plot = p3, device = "tiff", path =
 
 
 
+###-#-#
 
 netherlands_growth_rate_ci <- growth_rate_ci %>%
-  filter(NAME == "Netherlands")
+  filter(NAME == "France")
 merged_datanetherlands <- merged_data %>%
-  filter(NAME == "Netherlands")
+  filter(NAME == "France")
 
 p3nethelands<- ggplot(data = netherlands_growth_rate_ci, aes(x = Year, y = growth_rate2)) +
   geom_line(aes(color = NAME), size = 1) +
@@ -3863,7 +6287,7 @@ p3nethelands<- ggplot(data = netherlands_growth_rate_ci, aes(x = Year, y = growt
     strip.background = element_rect(fill = "white", color = "black"),
     strip.text = element_text(size = 14, face = "bold"),
     legend.position = "none",
-    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1)
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)
   ) +
   facet_wrap(~NAME, scales = "free_y")  # Apply the same y-axis limits to all facets
 
@@ -3873,6 +6297,7 @@ p3nethelands<- ggplot(data = netherlands_growth_rate_ci, aes(x = Year, y = growt
 p_doubling <- ggplot(data = growth_rate_ci, aes(x = Year, y = doubling_times, group = NAME)) +
   geom_line(aes(color = NAME), size = 1) +
   geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
   labs(title = "",
        x = "Year",
        y = "Doubling Time (in units of time)") +
@@ -3887,6 +6312,7 @@ p_doubling <- ggplot(data = growth_rate_ci, aes(x = Year, y = doubling_times, gr
 p_halving <- ggplot(data = growth_rate_ci, aes(x = Year, y = halving_times, group = NAME)) +
   geom_line(aes(color = NAME), size = 1) +
   geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
   labs(title = "",
        x = "Year",
        y = "Halving Time (in units of time)") +
@@ -3894,12 +6320,9 @@ p_halving <- ggplot(data = growth_rate_ci, aes(x = Year, y = halving_times, grou
   theme(text = element_text(size = 12, family = "Times New Roman"),
         strip.background = element_rect(fill = "white", colour = "black"),
         strip.text = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7),
         legend.position = "none") +
   facet_wrap(~NAME, scales = "free_y")
-
-# Print the plots
-print(p_doubling)
-print(p_halving)
 
 
 ggsave(filename = "p_doublingEU_carb.tiff", plot = p_doubling, device = "tiff", path = base_pathOut,
@@ -3908,6 +6331,165 @@ ggsave(filename = "p_halvingEU_carb.tiff", plot = p_halving, device = "tiff", pa
        width = 11, height = 7, dpi = 500, units = "in")
 
 
+
+
+
+
+
+
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -#
+#CARBAPENEM USE below: models:
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -#
+#ABX relationship##-##
+library(openxlsx)
+esac_data <- read.xlsx("/Users/lsh1807578/CISS Dropbox/kasim allel henriquez/B_Projects/0_UniversityofOxford/Vivli/data/data//abx_spEU.xlsx")
+esac_data$NAME <- esac_data$Country
+newdata_carbapesac <- merge(esac_data, growth_rate_ci, by = c("NAME", "Year"))
+newdata_carbapesac <- merge(esac_data, growth_rate_ci, by = c("NAME", "Year"))
+
+newdata_carbapesac <- newdata_carbapesac %>% 
+  arrange(NAME,Year)
+newdata_carbapesac <- newdata_carbapesac %>%
+  group_by(NAME) %>%
+  mutate(pct_change_did_total = (JO1DHDID_1000 - lag(JO1DHDID_1000)) / lag(JO1DHDID_1000) * 100) #%>%
+#mutate(pct_change_did_total = replace_na(pct_change_did_total, 0))
+
+
+
+##
+
+
+europe_shapefile <- ne_countries(continent = "Europe", returnclass = "sf")
+europe_shapefile <- st_make_valid(europe_shapefile)
+# Rename and modify sovereignt to NAME
+europe_shapefile <- mutate(europe_shapefile, NAME = sovereignt)
+europe_shapefile <- mutate(europe_shapefile,
+                           NAME = case_when(
+                             NAME == "Slovakia" ~ "Slovak Republic",
+                             NAME == "Republic of Serbia" ~ "Serbia",
+                             NAME == "Czechia" ~ "Czech Republic",
+                             TRUE ~ NAME
+                           ))
+
+# Ensure all geometries are valid
+states_shapefile<-europe_shapefile
+newdata_carbapesac$NAME<- newdata_carbapesac$Country
+newdata_carbapesac <- newdata_carbapesac %>%
+  filter(NAME != "Turkey") 
+# Merge spatial data with resistance data by 'NAME'
+states_merged <- merge(states_shapefile, newdata_carbapesac, by = "NAME", all.x = TRUE)
+
+# Create unique geometries for neighborhood structure
+states_spatial_unique <- states_merged[!duplicated(states_merged$NAME), ]
+#states_spatial_unique$GEOID <- as.numeric(factor(states_spatial_unique$NAME))
+
+# Merge to append the GEOID corresponding to each NAME
+#states_spatial <- st_join(states_merged, states_spatial_unique[, c("NAME", "GEOID")])
+#states_spatial <- states_spatial %>%
+#  rename(NAME = NAME.x) %>%
+#  dplyr::select(-NAME.y)
+# Remove countries not included in countries_list_eu_includ
+states_spatial_filtered <- states_merged %>%
+  dplyr::filter(NAME %in% countries_list_eu_includ)
+
+states_spatial_filtered <- states_spatial_filtered %>%
+  mutate(
+    GEOID = as.numeric(factor(NAME, levels = unique(NAME)))
+  )
+
+if (!inherits(states_spatial_filtered, "Spatial")) {
+  states_spatial_filtered <- as(states_spatial_filtered, "Spatial")
+}
+
+
+# 8. Remove duplicates based on GEOID to create unique state geometries for neighborhood structure
+states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+# 9. Recreate the neighborhood structure using unique state geometries
+nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+geo_levels <- as.character(states_spatial_unique$GEOID)
+attr(nb, "region.id") <- geo_levels
+names(nb) <- geo_levels
+attr(nb, "region.id") <- geo_levels
+names(nb) <- geo_levels
+states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
+
+
+# Clean and ensure data alignment with neighborhood structure
+states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
+states_spatial_filtered@data$growth_rate2 <- as.numeric(states_spatial_filtered@data$growth_rate2)
+states_spatial_filtered@data$pct_change_did_tota <- as.numeric(states_spatial_filtered@data$pct_change_did_tota)
+states_spatial_filtered@data$JO1DHDID_1000 <- as.numeric(states_spatial_filtered@data$JO1DHDID_1000)
+states_spatial_filtered@data$Year <- as.numeric(as.character(states_spatial_filtered@data$Year))
+#states_spatial_filtered@data <- states_spatial_filtered@data[complete.cases(states_spatial_filtered@data), ]
+
+# Set control parameters for GAM
+ctrl <- gam.control(nthreads = 6)  # Set parallel threads for faster computation
+
+
+###HEERE!
+
+# Convert `nb` region IDs to numeric to match `GEOID`
+attr(nb, "region.id") <- as.numeric(attr(nb, "region.id"))
+
+# Convert `GEOID` in dataset to numeric
+states_spatial_filtered$GEOID <- as.numeric(states_spatial_filtered$GEOID)
+
+# Final check to confirm match
+print("Final Check Before gam():")
+print(table(states_spatial_filtered$GEOID))  # Ensure no missing IDs
+print(attr(nb, "region.id"))  # Ensure they now match
+
+# Run the model
+model_gamx1 <- gam(
+  growth_rate2 ~ 
+    s(JO1DHDID_1000, m = 4, k = 10, bs = "tp") + 
+    s(pct_change_did_total, m = 4, k = 10, bs = "tp") + 
+    t2(JO1DHDID_1000, pct_change_did_total) +
+    s(Year, m = 3, k = 10, bs = "tp"),
+  #    s(GEOID, bs = 'mrf', xt = list(nb = nb)) +
+  #  te(Year, GEOID, bs=c("tp", "mrf"), m=c(2, NA), xt=list(Year=NULL, GEOID=list(nb=nb))),
+  data = states_spatial_filtered,
+  family = gaussian,
+  select = TRUE,
+  method = "REML"
+)
+# Generate predictions for growth_rate2
+predicted_growth_rate <- predict(model_gamx1, type = "response", newdata = states_spatial_filtered)
+
+# Add predicted values to the data
+states_spatial_filtered$predicted_growth_rate <- predicted_growth_rate
+
+# Plot predicted_growth_rate against JO1DHDID_1000
+ggplot(newdata_carbapesac, aes(x = JO1DHDID_1000, y = growth_rate2)) +
+  geom_point(color = 'blue', alpha = 0.6) +  # Add scatter points with transparency
+  geom_smooth(method = "gam", formula = y ~ s(x, k = 10, m=3, bs = "tp"), color = "red", linewidth = 1.2) +  # Smooth penalizing 2nd derivative
+  labs(
+    x = 'JO1DHDID_1000',
+    y = 'Predicted Growth Rate (growth_rate2)',
+    title = 'Predicted Growth Rate vs JO1DHDID_1000 with Penalized Smooth'
+  ) +
+  theme_minimal()
+
+# Filter the dataset to only include values where JO1DHDID_1000 < 0.1
+filtered_data <- newdata_carbapesac %>% filter(JO1DHDID_1000 < 0.1)
+
+# Plot with penalized cubic smoothing spline (m=3)
+Carb_use<- ggplot(filtered_data, aes(x = JO1DHDID_1000, y = growth_rate2)) +
+  geom_point(color = 'blue', alpha = 0.6) +  # Scatter points
+  geom_smooth(method = "gam", formula = y ~ s(x, k = 10, m = 1, bs = "tp"), color = "red", linewidth = 1.2) +  # Penalized cubic smooth
+  labs(
+    x = 'Carbapenem use in DDDs per 1000 inhabitants/day',
+    y = 'Growth Rate',
+    title = 'H.'
+  ) +
+  theme_minimal()
+
+# Compute correlation between JO1DHDID_1000 and growth_rate2 in filtered_data
+correlation_value <- cor(filtered_data$JO1DHDID_1000, filtered_data$growth_rate2, use = "complete.obs")
+# Print the correlation result
+print(correlation_value)
 
 
 
@@ -3942,6 +6524,516 @@ pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by =
 # Predict from GAM using the created function
 predictions <- gam_predictions(model_output_cephalos_eu$fr, newdata = pred_data)
 predictions <- merge(predictions, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+predictions_ceph_EU <- gam_predictions(model_output_cephalos_eu$fr, newdata = pred_data)
+predictions_ceph_EU <- merge(predictions_ceph_EU, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+resultsGrowt <- derivatives_mh2(model_output_cephalos_eu$fr, predictions_ceph_EU)
+
+# Usage of the function
+derivatives_data <- derivatives_mh(model_output_cephalos_eu$fr, newdata = pred_data, type = "central", h1 = 0.001, h2 = 0.001,startpoint = 0)
+derivatives_data$growth_rate <- derivatives_data$first_derivative + (derivatives_data$second_derivative / derivatives_data$first_derivative)
+merged_data <- merge(derivatives_data, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+predictions <- predictions %>%
+  group_by(NAME) %>%
+  mutate(
+    # Using lag to shift the pred values down
+    pred_lag = lag(pred, default = NA),
+    pred_lagu = lag(pred_upper, default = NA),
+    pred_lagl = lag(pred_lower, default = NA),
+    
+    # Calculate the growth rate
+    growth_rate2 = if_else(
+      is.na(pred_lag),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred - pred_lag) / pred_lag),  # Calculate percentage change
+    
+    growth_rate2_up = if_else(
+      is.na(pred_lagu),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_upper - pred_lagu) / pred_lagu),  # Calculate percentage change
+    
+    growth_rate2_lo = if_else(
+      is.na(pred_lagl),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_lower - pred_lagl) / pred_lagl)  # Calculate percentage change
+  ) %>%
+  dplyr::select(-pred_lag)  # Remove the temporary lag column
+
+Cephalos_predictions_grat<-predictions 
+Cephalos_changep_EU<- merged_data
+
+# Plotting
+num_colors <- length(unique(merged_data$NAME))
+palette <- colorRampPalette(brewer.pal(8, "Dark2"))(num_colors)
+# Calculate the maximum and minimum values for setting y-axis limits
+y_max <- max(merged_data$first_upper, na.rm = TRUE)
+y_min <- min(merged_data$first_lower, na.rm = TRUE)
+# If needed, you can add some padding to ensure all data points are within the view
+padding <- (y_max - y_min) * 0.05  # 5% padding
+y_max <- y_max + padding
+y_min <- y_min - padding
+# Filter for derivative_breakpoint == 1, then group by NAME and Year and count occurrences
+
+result_tablekokkkk <- merged_data %>%
+  filter(derivative_breakpoint == 1) %>%
+  group_by(Year) %>%
+  summarise(Count = n(), .groups = 'drop') # summarise to count occurrences, and drop grouping automatically
+# Display the table
+print(result_tablekokkkk)
+
+# Plotting with adjustments
+# Plotting with universal y-axis limits
+p <- ggplot(data = merged_data, aes(x = Year, y = first_derivative, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = first_lower, ymax = first_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022))+# Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  labs(title = "",
+       x = "Year",
+       y = "First derivative") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7)
+  ) +
+  facet_wrap(~NAME, scales = "free_y")   # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "first_derivat_eu_cephalos.tiff", plot = p, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+#-----------------------------#
+#PREDICTIONS: per country Europe
+#-----------------------------#
+max_y <- max(predictions$pred_upper, na.rm = TRUE)
+# Generate the plot
+ppred <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  facet_wrap(~NAME, scales = "fixed") +  # Use fixed scales for y-axis across all facets
+  scale_color_manual(values = palette) +
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = seq(min(predictions$Year), max(predictions$Year), by = 1)) +
+  scale_y_continuous(limits = c(0, max_y + 0), breaks = seq(0, max_y + 0, by = 5)) +
+  labs(title = "",
+       x = "Year",
+       y = "Estimated 3G cephalosporin-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7)
+  )
+# Display the plot
+ggsave(filename = "predictions_breakpoint_cephalos.tiff", plot = ppred, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+netherlands_predictions <- predictions %>%
+  filter(NAME == "France")
+merged_datanetherlands <- merged_data %>%
+  filter(NAME == "France")
+netherlands_plot_3gcr<-ggplot(data = netherlands_predictions, aes(x = Year, y = pred)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper), alpha = 0.2) +
+  geom_vline(data = filter(merged_datanetherlands , first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_datanetherlands, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  facet_wrap(~NAME, scales = "fixed") +  # Use fixed scales for y-axis across all facets
+  scale_color_manual(values = palette) +
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = seq(min(predictions$Year), max(predictions$Year), by = 1)) +
+  scale_y_continuous(limits = c(10, 40 ), breaks = seq(10, 40, by = 5)) +
+  labs(title = "",
+       x = "Year",
+       y = "Estimated 3G cephalosporin-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1))
+
+
+
+
+
+
+#-----------------------------#
+#PREDICTIONS: All together
+#-----------------------------#
+# Step 1: Prepare the data for labels
+label_data <- predictions %>%
+  group_by(NAME) %>%
+  filter(Year == max(Year)) %>%
+  ungroup()
+
+final_palette <- colorRampPalette(RColorBrewer::brewer.pal(8, "Set2"))(24)
+# Step 2: Generate the plot
+ppred_alle <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  geom_label_repel(data = label_data, aes(label = NAME, y = pred), 
+                   point.padding = 0.2, nudge_x = 1, direction = 'y', 
+                   size = 3.5, color = "black", fontface = "bold",
+                   box.padding = 0.35, segment.color = "grey50",
+                   fill = "white") +  # White background for labels
+  scale_color_manual(values = final_palette) +
+  scale_fill_manual(values = final_palette) +
+  scale_x_continuous(breaks = 2004:2022) +
+  #scale_y_continuous(limits = c(NA, max(predictions$pred_upper) +4)) +
+  scale_y_continuous(breaks = seq(0, 60, by = 5))+
+  labs(title = "",
+       x = "Year",
+       y = "Estimated 3rd generation cephalosporin-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=11),
+    axis.text.y = element_text(size=12),
+    axis.title.x = element_text(size=13),
+    axis.title.y = element_text(size=13)
+  )
+
+
+
+# Calculate max and min values
+extreme_values <- predictions %>%
+  group_by(NAME) %>%
+  summarize(max_pred = max(pred, na.rm = TRUE), min_pred = min(pred, na.rm = TRUE)) %>%
+  ungroup()
+# Ranking for maximum and minimum predictions
+extreme_values <- extreme_values %>%
+  arrange(desc(max_pred)) %>%
+  mutate(rank_max = row_number()) %>%
+  arrange(min_pred) %>%
+  mutate(rank_min = row_number())
+# Filter to get only the top 2 and bottom 2
+extreme_values <- extreme_values %>%
+  filter(rank_max <= 3 | rank_min <= 3)
+# Prepare highlighted names list
+highlighted_names <- unique(c(extreme_values$NAME[extreme_values$rank_max <= 3], 
+                              extreme_values$NAME[extreme_values$rank_min <= 3]))
+predictions <- predictions %>%
+  mutate(
+    color = ifelse(NAME %in% highlighted_names, NAME, NA),
+    pred = ifelse(is.na(pred), 0, pred)  # Replace NA predictions with 0 or another suitable default value
+  )
+# Check range of 'pred' to adjust y-axis limits
+range(predictions$pred, na.rm = TRUE)
+# Define the color palette
+unique_names <- unique(predictions$color, na.rm = TRUE)
+num_colors <- length(unique_names)
+
+# Choose a palette, e.g., 'Set1' which is good for categorical data
+# Ensure that there are enough colors, if not repeat the palette
+palette_colors <- brewer.pal(min(num_colors, 8), "Set3")
+if (num_colors > 8) {
+  palette_colors <- rep(palette_colors, length.out = num_colors)
+}
+
+final_palette <- setNames(palette_colors, unique_names)
+# Create the plot
+ppred_alle2x <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = color), size = 1.4, alpha = 1.9, na.rm = TRUE) +  # Thicker, less transparent lines
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.03) +
+  scale_color_manual(values = final_palette, na.translate = FALSE) +
+  scale_fill_manual(values = final_palette, guide = "none") +  # Make sure there is a plus sign at the end
+  scale_x_continuous(
+    breaks = seq(from = 2004, to = 2022, by = 4),
+    limits = c(2004, 2022)  # Closing parenthesis for limits
+  ) +  # Closing parenthesis was missing after 2022
+  scale_y_continuous(breaks = seq(0, 60, by = 5)
+  ) +
+  labs(title = "C. Estimated CRE (%)",
+       x = "Year",
+       y = "Estimated 3rd generation cephalosporin-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=11),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  )
+
+
+
+
+ggsave(filename = "pred_allEurop_toget_cephalos.tiff", plot = ppred_alle, device = "tiff", path = base_pathOut,
+       width = 16, height = 10, dpi = 500, units = "in")
+
+#-----------------------------#
+# Plotting SECOND DERIVATIVE:
+#-----------------------------#
+num_colors <- length(unique(merged_data$NAME))
+palette <- colorRampPalette(brewer.pal(8, "Dark2"))(num_colors)
+# Calculate the maximum and minimum values for setting y-axis limits
+y_max <- max(merged_data$second_upper, na.rm = TRUE)
+y_min <- min(merged_data$second_lower, na.rm = TRUE)
+# If needed, you can add some padding to ensure all data points are within the view
+padding <- (y_max - y_min) * 0.05  # 5% padding
+y_max <- y_max + padding
+y_min <- y_min - padding
+# Plotting with adjustments
+# Plotting with universal y-axis limits
+p2<- ggplot(data = merged_data, aes(x = Year, y = second_derivative, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = second_lower, ymax = second_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Second derivative") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7),
+    legend.position = "none"
+  ) +
+  facet_wrap(~NAME, scales = "free_y") #+
+#scale_y_continuous(limits = c(y_min, y_max))  # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "second_derivat_eu_cephalos.tiff", plot = p2, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+p2netherl_3gcr<- ggplot(data = merged_datanetherlands, aes(x = Year, y = second_derivative, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_ribbon(aes(ymin = second_lower, ymax = second_upper, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_datanetherlands, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_datanetherlands, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "red") +  # Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  labs(title = "",
+       x = "Year",
+       y = "Second derivative") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none"
+  ) +
+  facet_wrap(~NAME, scales = "free_y")
+
+
+#-----------------------------#
+#GROWTH RATE: 
+#-----------------------------#
+# Assuming derivatives_data is already prepared and using mutate for efficiency
+growth_rate_ci <- resultsGrowt  %>% #merged_data
+  rowwise() %>%
+  mutate(
+    growth_rate_results = list(simulate_growth_rate_ci(First_Derivative, Second_Derivative, n_sim = 1000))
+  ) %>%
+  unnest_wider(c(growth_rate_results)) %>%
+  ungroup()
+
+#growth_rate_ci$ci_lower <- growth_rate_ci$growth_rate +growth_rate_ci$ci_lower
+#growth_rate_ci$ci_upper <- growth_rate_ci$growth_rate +growth_rate_ci$ci_upper
+growth_rate_ci <- merge(predictions, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+
+growth_rate_ci$doubling_times <-  log(2) / growth_rate_ci$growth_rate2 # Calculate doubling time
+growth_rate_ci$halving_times <- log(0.5) / growth_rate_ci$growth_rate2   # Calculate halving time
+growth_rate_ci$NAME<- growth_rate_ci$NAME.x
+
+growth_rate_ci <- growth_rate_ci %>%
+  mutate(
+    growth_rate2 = if_else(Year == 2004, NA, growth_rate2),
+    growth_rate2_lo = if_else(Year == 2004, NA, growth_rate2_lo),
+    growth_rate2_up = if_else(Year == 2004, NA, growth_rate2_up),
+    doubling_times = if_else(Year == 2004, NA, doubling_times),
+    halving_times = if_else(Year == 2004, NA, halving_times)
+  )
+
+
+p3<- ggplot(data = growth_rate_ci, aes(x = Year, y = growth_rate2, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  #geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  #geom_ribbon(aes(ymin = growth_rate2_lo, ymax = growth_rate2_up), alpha = 0.2) +  # Shaded area for CIs
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Growth rate (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7),
+  ) +
+  facet_wrap(~NAME, scales = "free_y")  # Apply the same y-axis limits to all facets
+
+# Display the plot
+ggsave(filename = "growth_ratio_cephalosEU.tiff", plot = p3, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+
+netherlands_growth_rate_ci <- growth_rate_ci %>%
+  filter(NAME == "France")
+merged_datanetherlands <- merged_data %>%
+  filter(NAME == "France")
+
+p3nethelands_3gcr<- ggplot(data = netherlands_growth_rate_ci, aes(x = Year, y = growth_rate2)) +
+  geom_line(aes(color = NAME), size = 1) +
+  #geom_ribbon(aes(ymin = growth_rate2l, ymax = growth_rate2u, fill = NAME), alpha = 0.2) +
+  geom_vline(data = filter(merged_datanetherlands, first_derivative_sign_change == 1), 
+             aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
+  geom_vline(data = filter(merged_datanetherlands, derivative_breakpoint == 1), 
+             aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  geom_ribbon(aes(ymin = growth_rate2_lo, ymax = growth_rate2_up), alpha = 0.2) +  # Shaded area for CIs
+  geom_hline(yintercept = 0, linetype = "solid", color = "red") +  # Line at y=0
+  scale_x_continuous(breaks = 2005:2022, labels = as.character(2005:2022)) +
+  scale_color_manual(values = palette) +  # Assuming palette is predefined
+  scale_fill_manual(values = palette) +
+  labs(title = "",
+       x = "Year",
+       y = "Growth rate (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7)
+  ) +
+  facet_wrap(~NAME, scales = "free_y")  # Apply the same y-axis limits to all facets
+
+
+
+
+
+
+# Plot Doubling Times
+p_doubling <- ggplot(data = growth_rate_ci, aes(x = Year, y = doubling_times, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Doubling Time (in units of time)") +
+  theme_minimal() +
+  theme(text = element_text(size = 12, family = "Times New Roman"),
+        strip.background = element_rect(fill = "white", colour = "black"),
+        strip.text = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7),
+        legend.position = "none") +
+  facet_wrap(~NAME, scales = "free_y")
+
+# Plot Halving Times
+p_halving <- ggplot(data = growth_rate_ci, aes(x = Year, y = halving_times, group = NAME)) +
+  geom_line(aes(color = NAME), size = 1) +
+  geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
+  labs(title = "",
+       x = "Year",
+       y = "Halving Time (in units of time)") +
+  theme_minimal() +
+  theme(text = element_text(size = 12, family = "Times New Roman"),
+        strip.background = element_rect(fill = "white", colour = "black"),
+        strip.text = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7),
+        legend.position = "none") +
+  facet_wrap(~NAME, scales = "free_y")
+
+
+
+ggsave(filename = "p_doublingEU_cephalos.tiff", plot = p_doubling, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+ggsave(filename = "p_halvingEU_cephalos.tiff", plot = p_halving, device = "tiff", path = base_pathOut,
+       width = 11, height = 7, dpi = 500, units = "in")
+
+
+####
+predictions <- predictions %>%
+  group_by(NAME) %>%
+  mutate(
+    # Using lag to shift the pred values down
+    pred_lag = lag(pred, default = NA),
+    pred_lagu = lag(pred_upper, default = NA),
+    pred_lagl = lag(pred_lower, default = NA),
+    
+    # Calculate the growth rate
+    growth_rate2 = if_else(
+      is.na(pred_lag),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred - pred_lag) / pred_lag),  # Calculate percentage change
+    
+    growth_rate2_up = if_else(
+      is.na(pred_lagu),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_upper - pred_lagu) / pred_lagu),  # Calculate percentage change
+    
+    growth_rate2_lo = if_else(
+      is.na(pred_lagl),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_lower - pred_lagl) / pred_lagl)  # Calculate percentage change
+  ) %>%
+  dplyr::select(-pred_lag) 
+
+
 
 # Usage of the function
 derivatives_data <- derivatives_mh(model_output_cephalos_eu$fr, newdata = pred_data, type = "central", h1 = 0.001, h2 = 0.001)
@@ -4009,7 +7101,7 @@ ppred <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
   scale_y_continuous(limits = c(min_y, max_y + 0), breaks = seq(0, max_y + 0, by = 10)) +
   labs(title = "",
        x = "Year",
-       y = "Predicted 3rd generation cephalosporin-resistance (%)") +
+       y = "Estimated 3rd generation cephalosporin-resistance (%)") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -4052,7 +7144,7 @@ ppred_alle <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) 
   
   labs(title = "",
        x = "Year",
-       y = "Predicted 3rd generation cephalosporin-resistance (%)") +
+       y = "Estimated 3rd generation cephalosporin-resistance (%)") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -4214,6 +7306,154 @@ ggsave(filename = "p_halvingEU_cephalos.tiff", plot = p_halving, device = "tiff"
        width = 11, height = 7, dpi = 500, units = "in")
 
 
+
+
+
+
+
+
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -#
+# CEPHALOSPORINs USE below: models:
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -#
+library(openxlsx)
+esac_data <- read.xlsx("/Users/lsh1807578/CISS Dropbox/kasim allel henriquez/B_Projects/0_UniversityofOxford/Vivli/data/data//abx_spEU.xlsx")
+esac_data$NAME <- esac_data$Country
+growth_rate_ci$NAME <-growth_rate_ci$NAME.x
+newdata_carbapesac <- merge(esac_data, growth_rate_ci, by = c("NAME", "Year"))
+newdata_carbapesac <- merge(esac_data, growth_rate_ci, by = c("NAME", "Year"))
+
+newdata_carbapesac <- newdata_carbapesac %>% 
+  arrange(NAME,Year)
+newdata_carbapesac <- newdata_carbapesac %>%
+  group_by(NAME) %>%
+  mutate(pct_change_did_total = (JO1DDDID_1000 - lag(JO1DDDID_1000)) / lag(JO1DDDID_1000) * 100) #%>%
+#mutate(pct_change_did_total = replace_na(pct_change_did_total, 0))
+
+
+##
+europe_shapefile <- ne_countries(continent = "Europe", returnclass = "sf")
+europe_shapefile <- st_make_valid(europe_shapefile)
+# Rename and modify sovereignt to NAME
+europe_shapefile <- mutate(europe_shapefile, NAME = sovereignt)
+europe_shapefile <- mutate(europe_shapefile,
+                           NAME = case_when(
+                             NAME == "Slovakia" ~ "Slovak Republic",
+                             NAME == "Republic of Serbia" ~ "Serbia",
+                             NAME == "Czechia" ~ "Czech Republic",
+                             TRUE ~ NAME
+                           ))
+
+# Ensure all geometries are valid
+states_shapefile<-europe_shapefile
+newdata_carbapesac$NAME<- newdata_carbapesac$Country
+newdata_carbapesac <- newdata_carbapesac %>%
+  filter(NAME != "Turkey") 
+# Merge spatial data with resistance data by 'NAME'
+states_merged <- merge(states_shapefile, newdata_carbapesac, by = "NAME", all.x = TRUE)
+
+# Create unique geometries for neighborhood structure
+states_spatial_unique <- states_merged[!duplicated(states_merged$NAME), ]
+#states_spatial_unique$GEOID <- as.numeric(factor(states_spatial_unique$NAME))
+
+# Merge to append the GEOID corresponding to each NAME
+#states_spatial <- st_join(states_merged, states_spatial_unique[, c("NAME", "GEOID")])
+#states_spatial <- states_spatial %>%
+#  rename(NAME = NAME.x) %>%
+#  dplyr::select(-NAME.y)
+# Remove countries not included in countries_list_eu_includ
+states_spatial_filtered <- states_merged %>%
+  dplyr::filter(NAME %in% countries_list_eu_includ)
+
+states_spatial_filtered <- states_spatial_filtered %>%
+  mutate(
+    GEOID = as.numeric(factor(NAME, levels = unique(NAME)))
+  )
+
+if (!inherits(states_spatial_filtered, "Spatial")) {
+  states_spatial_filtered <- as(states_spatial_filtered, "Spatial")
+}
+
+
+# 8. Remove duplicates based on GEOID to create unique state geometries for neighborhood structure
+states_spatial_unique <- states_spatial_filtered[!duplicated(states_spatial_filtered$GEOID), ]
+# 9. Recreate the neighborhood structure using unique state geometries
+nb <- poly2nb(states_spatial_unique, row.names = states_spatial_unique$GEOID)
+geo_levels <- as.character(states_spatial_unique$GEOID)
+attr(nb, "region.id") <- geo_levels
+names(nb) <- geo_levels
+attr(nb, "region.id") <- geo_levels
+names(nb) <- geo_levels
+states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
+
+
+# Clean and ensure data alignment with neighborhood structure
+states_spatial_filtered@data$GEOID <- factor(states_spatial_filtered@data$GEOID, levels = attr(nb, "region.id"))
+states_spatial_filtered@data$growth_rate2 <- as.numeric(states_spatial_filtered@data$growth_rate2)
+states_spatial_filtered@data$pct_change_did_tota <- as.numeric(states_spatial_filtered@data$pct_change_did_tota)
+states_spatial_filtered@data$JO1DDDID_1000 <- as.numeric(states_spatial_filtered@data$JO1DDDID_1000)
+states_spatial_filtered@data$Year <- as.numeric(as.character(states_spatial_filtered@data$Year))
+#states_spatial_filtered@data <- states_spatial_filtered@data[complete.cases(states_spatial_filtered@data), ]
+
+# Set control parameters for GAM
+ctrl <- gam.control(nthreads = 6)  # Set parallel threads for faster computation
+
+# Convert `nb` region IDs to numeric to match `GEOID`
+attr(nb, "region.id") <- as.numeric(attr(nb, "region.id"))
+
+# Convert `GEOID` in dataset to numeric
+states_spatial_filtered$GEOID <- as.numeric(states_spatial_filtered$GEOID)
+
+# Final check to confirm match
+print("Final Check Before gam():")
+print(table(states_spatial_filtered$GEOID))  # Ensure no missing IDs
+print(attr(nb, "region.id"))  # Ensure they now match
+
+# Run the model
+model_gamx1 <- gam(
+  growth_rate2 ~ 
+    s(JO1DDDID_1000, m = 3, k = 10, bs = "tp") + 
+    s(pct_change_did_total, m = 3, k = 10, bs = "tp") + 
+    t2(JO1DDDID_1000, pct_change_did_total) +
+    s(Year, m = 3, k = 10, bs = "tp"),
+  data = states_spatial_filtered,
+  family = gaussian,
+  select = TRUE,
+  method = "REML"
+)
+# Generate predictions for growth_rate2
+predicted_growth_rate <- predict(model_gamx1, type = "response", newdata = states_spatial_filtered)
+
+# Add predicted values to the data
+states_spatial_filtered$predicted_growth_rate <- predicted_growth_rate
+
+
+
+# Plot predicted_growth_rate against JO1DHDID_1000
+newdata_carbapesac$growth_rate2[newdata_carbapesac$growth_rate2 > 50] <- NA
+newdata_carbapesac$JO1DDDID_1000[newdata_carbapesac$JO1DDDID_1000 > 1] <- NA
+
+Ceph_fig<- ggplot(newdata_carbapesac, aes(x = JO1DDDID_1000, y = growth_rate2)) +
+  geom_point(color = 'blue', alpha = 0.6) +  # Add scatter points with transparency
+  geom_smooth(method = "gam", formula = y ~ s(x, k = 10, m=2, bs = "tp"), color = "red", linewidth = 1.2) +  # Smooth penalizing 2nd derivative
+  labs(
+    x = '3GC use (J01DD) in DDDs per 1000 inhabitants/day',
+    y = 'Growth Rate',
+    title = 'H.'
+  ) +
+  ylim(-25, 25) +  # Limit y-axis to range -20 to 20
+  theme_minimal()
+
+
+# Compute correlation between JO1DHDID_1000 and growth_rate2 in filtered_data
+correlation_value <- cor(filtered_data$JO1DDDID_1000, filtered_data$growth_rate2, use = "complete.obs")
+# Print the correlation result
+print(correlation_value)
+
+
+
+
 ######
 #------------------------------------------------------------------------------#
 #NEW, FIRST-LINE RESISTANCE GRAPH: ######
@@ -4230,8 +7470,6 @@ new_data$Year <- as.numeric(as.character(new_data$Year))  # Ensure Year is nume
 states_spatial_fitered<- model_output_firstline_eu$states_spatial_filtered
 states_data_df <- as.data.frame(states_spatial_fitered@data)
 
-
-
 original_geo_levels <- unique(new_data$GEOID)
 GEOID_nameC <- states_data_df %>%
   dplyr::select(GEOID, NAME)
@@ -4244,13 +7482,44 @@ pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by =
 # Predict from GAM using the created function
 predictions <- gam_predictions(model_output_firstline_eu$fr, newdata = pred_data)
 predictions <- merge(predictions, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+predictions_firstline_EU <- gam_predictions(model_output_firstline_eu$fr, newdata = pred_data)
+predictions_firstline_EU <- merge(predictions_firstline_EU, unique_GEOID_data, by = "GEOID", all.x = TRUE)
 
 # Usage of the function
 derivatives_data <- derivatives_mh(model_output_firstline_eu$fr, newdata = pred_data, type = "central", h1 = 0.001, h2 = 0.001)
 derivatives_data$growth_rate <- derivatives_data$first_derivative + (derivatives_data$second_derivative / derivatives_data$first_derivative)
+resultsGrowt <- derivatives_mh2(model_output_firstline_eu$fr, predictions_firstline_EU)
 
 merged_data <- merge(derivatives_data, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+predictions <- predictions %>%
+  group_by(NAME) %>%
+  mutate(
+    # Using lag to shift the pred values down
+    pred_lag = lag(pred, default = NA),
+    pred_lagu = lag(pred_upper, default = NA),
+    pred_lagl = lag(pred_lower, default = NA),
+    
+    # Calculate the growth rate
+    growth_rate2 = if_else(
+      is.na(pred_lag),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred - pred_lag) / pred_lag),  # Calculate percentage change
+    
+    growth_rate2_up = if_else(
+      is.na(pred_lagu),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_upper - pred_lagu) / pred_lagu),  # Calculate percentage change
+    
+    growth_rate2_lo = if_else(
+      is.na(pred_lagl),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_lower - pred_lagl) / pred_lagl)  # Calculate percentage change
+  ) %>%
+  dplyr::select(-pred_lag)  # Remove the temporary lag column
+
+firstline_predictions_grat<-predictions 
 firstline_changep_EU<- merged_data
+
 # Plotting
 num_colors <- length(unique(merged_data$NAME))
 palette <- colorRampPalette(brewer.pal(8, "Dark2"))(num_colors)
@@ -4270,12 +7539,13 @@ p <- ggplot(data = merged_data, aes(x = Year, y = first_derivative, group = NAME
              aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
   geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
              aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022))+# Line at y=0
   scale_color_manual(values = palette) +  # Assuming palette is predefined
   scale_fill_manual(values = palette) +
   labs(title = "",
        x = "Year",
-       y = "First derivative (%)") +
+       y = "First derivative") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -4283,20 +7553,19 @@ p <- ggplot(data = merged_data, aes(x = Year, y = first_derivative, group = NAME
     panel.grid.minor = element_blank(),
     strip.background = element_rect(fill = "white", color = "black"),
     strip.text = element_text(size = 14, face = "bold"),
-    legend.position = "none"
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7)
   ) +
   facet_wrap(~NAME, scales = "free_y")   # Apply the same y-axis limits to all facets
 
 # Display the plot
-print(p)
-ggsave(filename = "first_derivat_eu_firstline.tiff", plot = p, device = "tiff", path = base_pathOut,
+ggsave(filename = "first_derivat_eu_firstlin.tiff", plot = p, device = "tiff", path = base_pathOut,
        width = 11, height = 7, dpi = 500, units = "in")
 
 #-----------------------------#
 #PREDICTIONS: per country Europe
 #-----------------------------#
 max_y <- max(predictions$pred_upper, na.rm = TRUE)
-min_y <- min(predictions$pred_lower, na.rm = TRUE)
 # Generate the plot
 ppred <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
   geom_line(aes(color = NAME), size = 1) +
@@ -4309,10 +7578,10 @@ ppred <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
   scale_color_manual(values = palette) +
   scale_fill_manual(values = palette) +
   scale_x_continuous(breaks = seq(min(predictions$Year), max(predictions$Year), by = 1)) +
-  scale_y_continuous(limits = c(min_y, max_y + 0), breaks = seq(0, max_y + 0, by = 10)) +
+  scale_y_continuous(limits = c(30, 80), breaks = seq(30, 80, by = 10)) +
   labs(title = "",
        x = "Year",
-       y = "First-line antibiotic-resistance (%)") +
+       y = "Predicted First-line antibiotic-resistance (%)") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -4321,12 +7590,13 @@ ppred <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
     strip.background = element_rect(fill = "white", color = "black"),
     strip.text = element_text(size = 14, face = "bold"),
     legend.position = "none",
-    axis.text.x = element_text(angle = 45, hjust = 1, size=8)
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7)
   )
 # Display the plot
 print(ppred)
-ggsave(filename = "predictions_breakpoint_firstline.tiff", plot = ppred, device = "tiff", path = base_pathOut,
+ggsave(filename = "predictions_breakpoint_firstlin.tiff", plot = ppred, device = "tiff", path = base_pathOut,
        width = 11, height = 7, dpi = 500, units = "in")
+
 
 #-----------------------------#
 #PREDICTIONS: All together
@@ -4337,7 +7607,7 @@ label_data <- predictions %>%
   filter(Year == max(Year)) %>%
   ungroup()
 
-final_palette <- colorRampPalette(RColorBrewer::brewer.pal(10, "Set2"))(27)
+final_palette <- colorRampPalette(RColorBrewer::brewer.pal(8, "Set2"))(24)
 # Step 2: Generate the plot
 ppred_alle <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
   geom_line(aes(color = NAME), size = 1) +
@@ -4350,12 +7620,11 @@ ppred_alle <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) 
   scale_color_manual(values = final_palette) +
   scale_fill_manual(values = final_palette) +
   scale_x_continuous(breaks = 2004:2022) +
-  scale_y_continuous(limits = c(NA, max(predictions$pred_upper) +5)) +
-  scale_y_continuous(breaks = seq(0, 45, by = 5))+
-  
+  scale_y_continuous(limits = c(30, 80)) +
+  scale_y_continuous(breaks = seq(30, 80, by = 5))+
   labs(title = "",
        x = "Year",
-       y = "First-line antibiotic-resistance (%)") +
+       y = "Predicted first-line antibiotic-resistance (%)") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -4370,10 +7639,81 @@ ppred_alle <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) 
     axis.title.y = element_text(size=13)
   )
 
+
+
+# Calculate max and min values
+extreme_values <- predictions %>%
+  group_by(NAME) %>%
+  summarize(max_pred = max(pred, na.rm = TRUE), min_pred = min(pred, na.rm = TRUE)) %>%
+  ungroup()
+# Ranking for maximum and minimum predictions
+extreme_values <- extreme_values %>%
+  arrange(desc(max_pred)) %>%
+  mutate(rank_max = row_number()) %>%
+  arrange(min_pred) %>%
+  mutate(rank_min = row_number())
+# Filter to get only the top 2 and bottom 2
+extreme_values <- extreme_values %>%
+  filter(rank_max <= 3 | rank_min <= 3)
+# Prepare highlighted names list
+highlighted_names <- unique(c(extreme_values$NAME[extreme_values$rank_max <= 3], 
+                              extreme_values$NAME[extreme_values$rank_min <= 3]))
+predictions <- predictions %>%
+  mutate(
+    color = ifelse(NAME %in% highlighted_names, NAME, NA),
+    pred = ifelse(is.na(pred), 0, pred)  # Replace NA predictions with 0 or another suitable default value
+  )
+# Check range of 'pred' to adjust y-axis limits
+range(predictions$pred, na.rm = TRUE)
+# Define the color palette
+unique_names <- unique(predictions$color, na.rm = TRUE)
+num_colors <- length(unique_names)
+
+# Choose a palette, e.g., 'Set1' which is good for categorical data
+# Ensure that there are enough colors, if not repeat the palette
+palette_colors <- brewer.pal(min(num_colors, 8), "Set3")
+if (num_colors > 8) {
+  palette_colors <- rep(palette_colors, length.out = num_colors)
+}
+
+final_palette <- setNames(palette_colors, unique_names)
+# Create the plot
+ppred_alle2x <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = color), size = 1, na.rm = TRUE) +  # Ensure NA values in color are ignored
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  scale_color_manual(values = final_palette, na.translate = FALSE) +
+  scale_fill_manual(values = final_palette, guide = "none") +  # Make sure there is a plus sign at the end
+  scale_x_continuous(
+    breaks = seq(from = 2004, to = 2022, by = 4),
+    limits = c(2004, 2022)  # Closing parenthesis for limits
+  ) +  # Closing parenthesis was missing after 2022
+  scale_y_continuous(
+    limits = c(30, 80), 
+    breaks = seq(30, 80, by = 5)
+  ) +
+  labs(title = "C. Predicted First-line antibiotic-resistance (%)",
+       x = "Year",
+       y = "Predicted first-line antibiotic-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 360, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  )
+
 # Print the plot
-print(ppred_alle)
-ggsave(filename = "pred_allEurop_toget_firstline.tiff", plot = ppred_alle, device = "tiff", path = base_pathOut,
-       width = 14, height = 8, dpi = 500, units = "in")
+print(ppred_alle2x)
+
+
+ggsave(filename = "pred_allEurop_toget_firstlin.tiff", plot = ppred_alle, device = "tiff", path = base_pathOut,
+       width = 16, height = 10, dpi = 500, units = "in")
 
 #-----------------------------#
 # Plotting SECOND DERIVATIVE:
@@ -4399,9 +7739,10 @@ p2<- ggplot(data = merged_data, aes(x = Year, y = second_derivative, group = NAM
   geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
   scale_color_manual(values = palette) +  # Assuming palette is predefined
   scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022) +
   labs(title = "",
        x = "Year",
-       y = "Second derivative (%)") +
+       y = "Second derivative") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -4409,14 +7750,14 @@ p2<- ggplot(data = merged_data, aes(x = Year, y = second_derivative, group = NAM
     panel.grid.minor = element_blank(),
     strip.background = element_rect(fill = "white", color = "black"),
     strip.text = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7),
     legend.position = "none"
   ) +
   facet_wrap(~NAME, scales = "free_y") #+
 #scale_y_continuous(limits = c(y_min, y_max))  # Apply the same y-axis limits to all facets
 
 # Display the plot
-print(p2)
-ggsave(filename = "second_derivat_eu_firstline.tiff", plot = p2, device = "tiff", path = base_pathOut,
+ggsave(filename = "second_derivat_eu_firstlin.tiff", plot = p2, device = "tiff", path = base_pathOut,
        width = 11, height = 7, dpi = 500, units = "in")
 
 
@@ -4424,43 +7765,45 @@ ggsave(filename = "second_derivat_eu_firstline.tiff", plot = p2, device = "tiff"
 #GROWTH RATE: 
 #-----------------------------#
 # Assuming derivatives_data is already prepared and using mutate for efficiency
-growth_rate_ci <- derivatives_data %>%
+growth_rate_ci <- resultsGrowt  %>% #merged_data
   rowwise() %>%
   mutate(
-    growth_rate_results = list(simulate_growth_rate_ci(first_derivative, second_derivative, n_sim = 1000))
+    growth_rate_results = list(simulate_growth_rate_ci(First_Derivative, Second_Derivative, n_sim = 1000))
   ) %>%
-  unnest_wider(growth_rate_results)
+  unnest_wider(c(growth_rate_results)) %>%
+  ungroup()
 
+growth_rate_ci <- merge(predictions, unique_GEOID_data, by = "GEOID", all.x = TRUE)
 
-growth_rate_ci <- merge(growth_rate_ci, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+growth_rate_ci$doubling_times <-  log(2) / growth_rate_ci$growth_rate2 # Calculate doubling time
+growth_rate_ci$halving_times <- log(0.5) / growth_rate_ci$growth_rate2   # Calculate halving time
+growth_rate_ci$NAME<- growth_rate_ci$NAME.x
 
-growth_rate_ci$doubling_times <-  log(2) / growth_rate_ci$growth_rate # Calculate doubling time
-growth_rate_ci$halving_times =  log(0.5) / growth_rate_ci$growth_rate   # Calculate halving time
-
-doubling_halving_times <- derivatives_data %>%
+growth_rate_ci <- growth_rate_ci %>%
   mutate(
-    Doubling_Time = log(2) / first_derivative,   # Calculate doubling time
-    Halving_Time = log(0.5) / first_derivative   # Calculate halving time
+    growth_rate2 = if_else(Year == 2004, NA, growth_rate2),
+    growth_rate2_lo = if_else(Year == 2004, NA, growth_rate2_lo),
+    growth_rate2_up = if_else(Year == 2004, NA, growth_rate2_up),
+    doubling_times = if_else(Year == 2004, NA, doubling_times),
+    halving_times = if_else(Year == 2004, NA, halving_times)
   )
 
-# Filter to remove infinite or undefined times (which occur if first_derivative is 0)
-doubling_halving_times <- doubling_halving_times %>%
-  filter(!is.infinite(Doubling_Time) & !is.na(Doubling_Time) & 
-           !is.infinite(Halving_Time) & !is.na(Halving_Time))
 
-p3<- ggplot(data = growth_rate_ci, aes(x = Year, y = growth_rate, group = NAME)) +
+p3<- ggplot(data = growth_rate_ci, aes(x = Year, y = growth_rate2, group = NAME)) +
   geom_line(aes(color = NAME), size = 1) +
   #geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = NAME), alpha = 0.2) +
   geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
              aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
   geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
              aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  #geom_ribbon(aes(ymin = growth_rate2_lo, ymax = growth_rate2_up), alpha = 0.2) +  # Shaded area for CIs
   geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
   scale_color_manual(values = palette) +  # Assuming palette is predefined
   scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022))+
   labs(title = "",
        x = "Year",
-       y = "Growth rate") +
+       y = "Growth rate (%)") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -4468,20 +7811,22 @@ p3<- ggplot(data = growth_rate_ci, aes(x = Year, y = growth_rate, group = NAME))
     panel.grid.minor = element_blank(),
     strip.background = element_rect(fill = "white", color = "black"),
     strip.text = element_text(size = 14, face = "bold"),
-    legend.position = "none"
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7) 
   ) +
   facet_wrap(~NAME, scales = "free_y")  # Apply the same y-axis limits to all facets
 
 # Display the plot
-print(p3)
-ggsave(filename = "growth_ratio_firstlineEU.tiff", plot = p3, device = "tiff", path = base_pathOut,
+ggsave(filename = "growth_ratio_firstlinEU.tiff", plot = p3, device = "tiff", path = base_pathOut,
        width = 11, height = 7, dpi = 500, units = "in")
+
 
 
 # Plot Doubling Times
 p_doubling <- ggplot(data = growth_rate_ci, aes(x = Year, y = doubling_times, group = NAME)) +
   geom_line(aes(color = NAME), size = 1) +
   geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
   labs(title = "",
        x = "Year",
        y = "Doubling Time (in units of time)") +
@@ -4496,6 +7841,7 @@ p_doubling <- ggplot(data = growth_rate_ci, aes(x = Year, y = doubling_times, gr
 p_halving <- ggplot(data = growth_rate_ci, aes(x = Year, y = halving_times, group = NAME)) +
   geom_line(aes(color = NAME), size = 1) +
   geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
   labs(title = "",
        x = "Year",
        y = "Halving Time (in units of time)") +
@@ -4503,20 +7849,16 @@ p_halving <- ggplot(data = growth_rate_ci, aes(x = Year, y = halving_times, grou
   theme(text = element_text(size = 12, family = "Times New Roman"),
         strip.background = element_rect(fill = "white", colour = "black"),
         strip.text = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7),
         legend.position = "none") +
   facet_wrap(~NAME, scales = "free_y")
 
-# Print the plots
-print(p_doubling)
-print(p_halving)
 
-
-ggsave(filename = "p_doublingEU_firstline.tiff", plot = p_doubling, device = "tiff", path = base_pathOut,
+ggsave(filename = "p_doublingEU_firstlin.tiff", plot = p_doubling, device = "tiff", path = base_pathOut,
        width = 11, height = 7, dpi = 500, units = "in")
-ggsave(filename = "p_halvingEU_firstline.tiff", plot = p_halving, device = "tiff", path = base_pathOut,
+ggsave(filename = "p_halvingEU_firstlin.tiff", plot = p_halving, device = "tiff", path = base_pathOut,
        width = 11, height = 7, dpi = 500, units = "in")
 
-firstline_changep_EU<- growth_rate_ci
 
 ######
 #------------------------------------------------------------------------------#
@@ -4548,7 +7890,6 @@ pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by =
 predictions <- gam_predictions(model_output_mdr_eu$sf, newdata = pred_data)
 predictions <- merge(predictions, unique_GEOID_data, by = "GEOID", all.x = TRUE)
 
-#predictions_cephalos <- gam_predictions(model_output_cephalos_eu$fr, newdata = pred_data)
 
 # Usage of the function
 derivatives_data <- derivatives_mh(model_output_mdr_eu$sf, newdata = pred_data, type = "central", h1 = 0.001, h2 = 0.001)
@@ -4556,8 +7897,39 @@ derivatives_data$growth_rate <- derivatives_data$first_derivative + (derivatives
 
 merged_data <- merge(derivatives_data, unique_GEOID_data, by = "GEOID", all.x = TRUE)
 mdr_changep_EU<- merged_data
-#derivatives_data_cepha <- derivatives_mh(model_output_cephalos_eu$fr, newdata = pred_data, type = "central", h1 = 0.001, h2 = 0.001)
+predictions_mdr_EU <- gam_predictions(model_output_mdr_eu$sf, newdata = pred_data)
+predictions_mdr_EU <- merge(predictions_mdr_EU, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+resultsGrowt <- derivatives_mh2(model_output_mdr_eu$sf, predictions_mdr_EU)
 
+
+predictions <- predictions %>%
+  group_by(NAME) %>%
+  mutate(
+    # Using lag to shift the pred values down
+    pred_lag = lag(pred, default = NA),
+    pred_lagu = lag(pred_upper, default = NA),
+    pred_lagl = lag(pred_lower, default = NA),
+    
+    # Calculate the growth rate
+    growth_rate2 = if_else(
+      is.na(pred_lag),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred - pred_lag) / pred_lag),  # Calculate percentage change
+    
+    growth_rate2_up = if_else(
+      is.na(pred_lagu),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_upper - pred_lagu) / pred_lagu),  # Calculate percentage change
+    
+    growth_rate2_lo = if_else(
+      is.na(pred_lagl),
+      NA_real_,  # Ensures that the first value where lag is NA gets an NA in growth_rate2
+      100 * (pred_lower - pred_lagl) / pred_lagl)  # Calculate percentage change
+  ) %>%
+  dplyr::select(-pred_lag)  # Remove the temporary lag column
+
+mdr_predictions_grat<-predictions 
+mdr_changep_EU<- merged_data
 
 # Plotting
 num_colors <- length(unique(merged_data$NAME))
@@ -4578,12 +7950,13 @@ p <- ggplot(data = merged_data, aes(x = Year, y = first_derivative, group = NAME
              aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
   geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
              aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022))+# Line at y=0
   scale_color_manual(values = palette) +  # Assuming palette is predefined
   scale_fill_manual(values = palette) +
   labs(title = "",
        x = "Year",
-       y = "First derivative (%)") +
+       y = "First derivative") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -4591,12 +7964,12 @@ p <- ggplot(data = merged_data, aes(x = Year, y = first_derivative, group = NAME
     panel.grid.minor = element_blank(),
     strip.background = element_rect(fill = "white", color = "black"),
     strip.text = element_text(size = 14, face = "bold"),
-    legend.position = "none"
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7)
   ) +
   facet_wrap(~NAME, scales = "free_y")   # Apply the same y-axis limits to all facets
 
 # Display the plot
-print(p)
 ggsave(filename = "first_derivat_eu_mdr.tiff", plot = p, device = "tiff", path = base_pathOut,
        width = 11, height = 7, dpi = 500, units = "in")
 
@@ -4604,7 +7977,6 @@ ggsave(filename = "first_derivat_eu_mdr.tiff", plot = p, device = "tiff", path =
 #PREDICTIONS: per country Europe
 #-----------------------------#
 max_y <- max(predictions$pred_upper, na.rm = TRUE)
-min_y <- min(predictions$pred_lower, na.rm = TRUE)
 # Generate the plot
 ppred <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
   geom_line(aes(color = NAME), size = 1) +
@@ -4617,10 +7989,10 @@ ppred <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
   scale_color_manual(values = palette) +
   scale_fill_manual(values = palette) +
   scale_x_continuous(breaks = seq(min(predictions$Year), max(predictions$Year), by = 1)) +
-  scale_y_continuous(limits = c(min_y, max_y + 0), breaks = seq(0, max_y + 0, by = 10)) +
+  scale_y_continuous(limits = c(0, 70), breaks = seq(0, 70, by = 10)) +
   labs(title = "",
        x = "Year",
-       y = "Predicted multidrug-resistance (%)") +
+       y = "Estimated Multidrug-resistance (%)") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -4629,12 +8001,13 @@ ppred <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
     strip.background = element_rect(fill = "white", color = "black"),
     strip.text = element_text(size = 14, face = "bold"),
     legend.position = "none",
-    axis.text.x = element_text(angle = 45, hjust = 1, size=8)
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7)
   )
 # Display the plot
 print(ppred)
 ggsave(filename = "predictions_breakpoint_mdr.tiff", plot = ppred, device = "tiff", path = base_pathOut,
        width = 11, height = 7, dpi = 500, units = "in")
+
 
 #-----------------------------#
 #PREDICTIONS: All together
@@ -4645,7 +8018,7 @@ label_data <- predictions %>%
   filter(Year == max(Year)) %>%
   ungroup()
 
-final_palette <- colorRampPalette(RColorBrewer::brewer.pal(10, "Set2"))(27)
+final_palette <- colorRampPalette(RColorBrewer::brewer.pal(8, "Set2"))(24)
 # Step 2: Generate the plot
 ppred_alle <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
   geom_line(aes(color = NAME), size = 1) +
@@ -4658,12 +8031,11 @@ ppred_alle <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) 
   scale_color_manual(values = final_palette) +
   scale_fill_manual(values = final_palette) +
   scale_x_continuous(breaks = 2004:2022) +
-  scale_y_continuous(limits = c(NA, max(predictions$pred_upper) +5)) +
-  scale_y_continuous(breaks = seq(0, 45, by = 5))+
-  
+  scale_y_continuous(limits = c(30, 80)) +
+  scale_y_continuous(breaks = seq(0, 70, by = 5))+
   labs(title = "",
        x = "Year",
-       y = "Predicted multidrug-resistance (%)") +
+       y = "Estimated Multidrug-resistance (%)") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -4678,10 +8050,81 @@ ppred_alle <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) 
     axis.title.y = element_text(size=13)
   )
 
+
+
+# Calculate max and min values
+extreme_values <- predictions %>%
+  group_by(NAME) %>%
+  summarize(max_pred = max(pred, na.rm = TRUE), min_pred = min(pred, na.rm = TRUE)) %>%
+  ungroup()
+# Ranking for maximum and minimum predictions
+extreme_values <- extreme_values %>%
+  arrange(desc(max_pred)) %>%
+  mutate(rank_max = row_number()) %>%
+  arrange(min_pred) %>%
+  mutate(rank_min = row_number())
+# Filter to get only the top 2 and bottom 2
+extreme_values <- extreme_values %>%
+  filter(rank_max <= 3 | rank_min <= 3)
+# Prepare highlighted names list
+highlighted_names <- unique(c(extreme_values$NAME[extreme_values$rank_max <= 3], 
+                              extreme_values$NAME[extreme_values$rank_min <= 3]))
+predictions <- predictions %>%
+  mutate(
+    color = ifelse(NAME %in% highlighted_names, NAME, NA),
+    pred = ifelse(is.na(pred), 0, pred)  # Replace NA predictions with 0 or another suitable default value
+  )
+# Check range of 'pred' to adjust y-axis limits
+range(predictions$pred, na.rm = TRUE)
+# Define the color palette
+unique_names <- unique(predictions$color, na.rm = TRUE)
+num_colors <- length(unique_names)
+
+# Choose a palette, e.g., 'Set1' which is good for categorical data
+# Ensure that there are enough colors, if not repeat the palette
+palette_colors <- brewer.pal(min(num_colors, 8), "Set3")
+if (num_colors > 8) {
+  palette_colors <- rep(palette_colors, length.out = num_colors)
+}
+
+final_palette <- setNames(palette_colors, unique_names)
+# Create the plot
+ppred_alle2x <- ggplot(data = predictions, aes(x = Year, y = pred, group = NAME)) +
+  geom_line(aes(color = color), size = 1, na.rm = TRUE) +  # Ensure NA values in color are ignored
+  geom_ribbon(aes(ymin = pred_lower, ymax = pred_upper, fill = NAME), alpha = 0.2) +
+  scale_color_manual(values = final_palette, na.translate = FALSE) +
+  scale_fill_manual(values = final_palette, guide = "none") +  # Make sure there is a plus sign at the end
+  scale_x_continuous(
+    breaks = seq(from = 2004, to = 2022, by = 4),
+    limits = c(2004, 2022)  # Closing parenthesis for limits
+  ) +  # Closing parenthesis was missing after 2022
+  scale_y_continuous(
+    limits = c(0, 70), 
+    breaks = seq(0, 70, by = 5)
+  ) +
+  labs(title = "C. Estimated Multidrug-resistance (%)",
+       x = "Year",
+       y = "Estimated Multidrug-resistance (%)") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 360, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.x = element_text(size = 13),
+    axis.title.y = element_text(size = 13)
+  )
+
 # Print the plot
-print(ppred_alle)
+print(ppred_alle2x)
+
+
 ggsave(filename = "pred_allEurop_toget_mdr.tiff", plot = ppred_alle, device = "tiff", path = base_pathOut,
-       width = 14, height = 8, dpi = 500, units = "in")
+       width = 16, height = 10, dpi = 500, units = "in")
 
 #-----------------------------#
 # Plotting SECOND DERIVATIVE:
@@ -4707,9 +8150,10 @@ p2<- ggplot(data = merged_data, aes(x = Year, y = second_derivative, group = NAM
   geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
   scale_color_manual(values = palette) +  # Assuming palette is predefined
   scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022) +
   labs(title = "",
        x = "Year",
-       y = "Second derivative (%)") +
+       y = "Second derivative") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -4717,13 +8161,13 @@ p2<- ggplot(data = merged_data, aes(x = Year, y = second_derivative, group = NAM
     panel.grid.minor = element_blank(),
     strip.background = element_rect(fill = "white", color = "black"),
     strip.text = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7),
     legend.position = "none"
   ) +
   facet_wrap(~NAME, scales = "free_y") #+
 #scale_y_continuous(limits = c(y_min, y_max))  # Apply the same y-axis limits to all facets
 
 # Display the plot
-print(p2)
 ggsave(filename = "second_derivat_eu_mdr.tiff", plot = p2, device = "tiff", path = base_pathOut,
        width = 11, height = 7, dpi = 500, units = "in")
 
@@ -4732,43 +8176,45 @@ ggsave(filename = "second_derivat_eu_mdr.tiff", plot = p2, device = "tiff", path
 #GROWTH RATE: 
 #-----------------------------#
 # Assuming derivatives_data is already prepared and using mutate for efficiency
-growth_rate_ci <- derivatives_data %>%
+growth_rate_ci <- resultsGrowt  %>% #merged_data
   rowwise() %>%
   mutate(
-    growth_rate_results = list(simulate_growth_rate_ci(first_derivative, second_derivative, n_sim = 1000))
+    growth_rate_results = list(simulate_growth_rate_ci(First_Derivative, Second_Derivative, n_sim = 1000))
   ) %>%
-  unnest_wider(growth_rate_results)
+  unnest_wider(c(growth_rate_results)) %>%
+  ungroup()
 
+growth_rate_ci <- merge(predictions, unique_GEOID_data, by = "GEOID", all.x = TRUE)
 
-growth_rate_ci <- merge(growth_rate_ci, unique_GEOID_data, by = "GEOID", all.x = TRUE)
+growth_rate_ci$doubling_times <-  log(2) / growth_rate_ci$growth_rate2 # Calculate doubling time
+growth_rate_ci$halving_times <- log(0.5) / growth_rate_ci$growth_rate2   # Calculate halving time
+growth_rate_ci$NAME<- growth_rate_ci$NAME.x
 
-growth_rate_ci$doubling_times <-  log(2) / growth_rate_ci$growth_rate # Calculate doubling time
-growth_rate_ci$halving_times =  log(0.5) / growth_rate_ci$growth_rate   # Calculate halving time
-
-doubling_halving_times <- derivatives_data %>%
+growth_rate_ci <- growth_rate_ci %>%
   mutate(
-    Doubling_Time = log(2) / first_derivative,   # Calculate doubling time
-    Halving_Time = log(0.5) / first_derivative   # Calculate halving time
+    growth_rate2 = if_else(Year == 2004, NA, growth_rate2),
+    growth_rate2_lo = if_else(Year == 2004, NA, growth_rate2_lo),
+    growth_rate2_up = if_else(Year == 2004, NA, growth_rate2_up),
+    doubling_times = if_else(Year == 2004, NA, doubling_times),
+    halving_times = if_else(Year == 2004, NA, halving_times)
   )
 
-# Filter to remove infinite or undefined times (which occur if first_derivative is 0)
-doubling_halving_times <- doubling_halving_times %>%
-  filter(!is.infinite(Doubling_Time) & !is.na(Doubling_Time) & 
-           !is.infinite(Halving_Time) & !is.na(Halving_Time))
 
-p3<- ggplot(data = growth_rate_ci, aes(x = Year, y = growth_rate, group = NAME)) +
+p3<- ggplot(data = growth_rate_ci, aes(x = Year, y = growth_rate2, group = NAME)) +
   geom_line(aes(color = NAME), size = 1) +
   #geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci, fill = NAME), alpha = 0.2) +
   geom_vline(data = filter(merged_data, first_derivative_sign_change == 1), 
              aes(xintercept = Year), color = "#6baed6", linetype = "dashed", size = 0.5) +
   geom_vline(data = filter(merged_data, derivative_breakpoint == 1), 
              aes(xintercept = Year), color = "#fed98e", linetype = "dashed", size = 0.5) +
+  #geom_ribbon(aes(ymin = growth_rate2_lo, ymax = growth_rate2_up), alpha = 0.2) +  # Shaded area for CIs
   geom_hline(yintercept = 0, linetype = "dashed", color = "red") +  # Line at y=0
   scale_color_manual(values = palette) +  # Assuming palette is predefined
   scale_fill_manual(values = palette) +
+  scale_x_continuous(breaks = 2004:2022,labels = as.character(2004:2022))+
   labs(title = "",
        x = "Year",
-       y = "Growth rate") +
+       y = "Growth rate (%)") +
   theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -4776,20 +8222,22 @@ p3<- ggplot(data = growth_rate_ci, aes(x = Year, y = growth_rate, group = NAME))
     panel.grid.minor = element_blank(),
     strip.background = element_rect(fill = "white", color = "black"),
     strip.text = element_text(size = 14, face = "bold"),
-    legend.position = "none"
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7) 
   ) +
   facet_wrap(~NAME, scales = "free_y")  # Apply the same y-axis limits to all facets
 
 # Display the plot
-print(p3)
 ggsave(filename = "growth_ratio_mdrEU.tiff", plot = p3, device = "tiff", path = base_pathOut,
        width = 11, height = 7, dpi = 500, units = "in")
+
 
 
 # Plot Doubling Times
 p_doubling <- ggplot(data = growth_rate_ci, aes(x = Year, y = doubling_times, group = NAME)) +
   geom_line(aes(color = NAME), size = 1) +
   geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
   labs(title = "",
        x = "Year",
        y = "Doubling Time (in units of time)") +
@@ -4804,6 +8252,7 @@ p_doubling <- ggplot(data = growth_rate_ci, aes(x = Year, y = doubling_times, gr
 p_halving <- ggplot(data = growth_rate_ci, aes(x = Year, y = halving_times, group = NAME)) +
   geom_line(aes(color = NAME), size = 1) +
   geom_point(aes(color = NAME), size = 2) +
+  scale_x_continuous(breaks = 2004:2022) +
   labs(title = "",
        x = "Year",
        y = "Halving Time (in units of time)") +
@@ -4811,12 +8260,9 @@ p_halving <- ggplot(data = growth_rate_ci, aes(x = Year, y = halving_times, grou
   theme(text = element_text(size = 12, family = "Times New Roman"),
         strip.background = element_rect(fill = "white", colour = "black"),
         strip.text = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size=7),
         legend.position = "none") +
   facet_wrap(~NAME, scales = "free_y")
-
-# Print the plots
-print(p_doubling)
-print(p_halving)
 
 
 ggsave(filename = "p_doublingEU_mdr.tiff", plot = p_doubling, device = "tiff", path = base_pathOut,
@@ -4824,7 +8270,6 @@ ggsave(filename = "p_doublingEU_mdr.tiff", plot = p_doubling, device = "tiff", p
 ggsave(filename = "p_halvingEU_mdr.tiff", plot = p_halving, device = "tiff", path = base_pathOut,
        width = 11, height = 7, dpi = 500, units = "in")
 
-mdr_changep_EU<- growth_rate_ci
 
 
 ######
@@ -4894,11 +8339,11 @@ fit_gam_model_euGen <- function(country_resistance_carbap_euGen) {
   
   # Fit the MRF model with spatio-temporal smoothing
   model_gamx1 <- gam(Resistance ~ 
-                       s(Year, m=3, k=k, bs = "tp") +  # Assuming 'Year' can support more knots
-                       s(GEOID, bs = 'mrf', xt = list(nb = nb)) +
-                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb))) +
-                       Gender +  # Treat 'Gender' as a factor (categorical effect)
-                       Year:Gender,  
+                       s(Year, by = Gender, m=3, k=k, bs = "tp") +  # Assuming 'Year' can support more knots
+                       s(GEOID, by = Gender, bs = 'mrf', xt = list(nb = nb)) +
+                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb)), by= Gender)
+                       ,   # Treat 'Gender' as a factor (categorical effect)
+                       #+ Year:Gender,  
                      data = states_spatial_filtered@data,
                      family = binomial, 
                      select = TRUE,
@@ -4972,11 +8417,10 @@ fit_gam_model_mdr_euGen <- function(state_resistance_carbap) {
   
   # Fit the MRF model with spatio-temporal smoothing
   model_gamx1 <- gam(MDR ~ 
-                       s(Year, m=3, k=k, bs = "tp") +  # Assuming 'Year' can support more knots
-                       s(GEOID, bs = 'mrf', xt = list(nb = nb)) +
-                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb))) +
-                       Gender +  # Treat 'Gender' as a factor (categorical effect)
-                       Year:Gender,  
+                       s(Year, by = Gender, m=3, k=k, bs = "tp") +  # Assuming 'Year' can support more knots
+                       s(GEOID, by = Gender, bs = 'mrf', xt = list(nb = nb)) +
+                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb)), by= Gender),  # Treat 'Gender' as a factor (categorical effect)
+                       #+Year:Gender,  
                      data = states_spatial_filtered@data,
                      family = binomial, 
                      select = TRUE,
@@ -4986,7 +8430,6 @@ fit_gam_model_mdr_euGen <- function(state_resistance_carbap) {
 }
 
 #OUTPUT OF THE RESULTS SPATIO-TEMPORAL MODELS:
-
 model_output_carbap_euGen <- fit_gam_model_euGen(country_resistance_carbap_euGen)
 model_output_cephalos_euGen <- fit_gam_model_euGen(country_resistance_cephalos_euGen)
 model_output_firstline_euGen <- fit_gam_model_euGen(country_resistance_firstline_euGen)
@@ -5051,11 +8494,10 @@ fit_gam_model_euAgeg <- function(country_resistance_carbap_euGen) {
   
   # Fit the MRF model with spatio-temporal smoothing
   model_gamx1 <- gam(Resistance ~ 
-                       s(Year, m=3, k=10, bs = "tp") +  # Assuming 'Year' can support more knots
-                       s(GEOID, bs = 'mrf', xt = list(nb = nb)) +
-                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb))) +
-                       Agegroup +  # Treat 'Gender' as a factor (categorical effect)
-                       Year:Agegroup,  
+                       s(Year, by = Agegroup, m=3, k=10, bs = "tp") +  # Assuming 'Year' can support more knots
+                       s(GEOID, by = Agegroup, bs = 'mrf', xt = list(nb = nb)) +
+                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb)), by= Agegroup),  # Treat 'Gender' as a factor (categorical effect)
+                       #+Year:Agegroup,  
                      data = states_spatial_filtered@data,
                      family = binomial, 
                      select = TRUE,
@@ -5128,11 +8570,10 @@ fit_gam_model_mdr_euAgeg <- function(state_resistance_carbap) {
   # 14. Fit the MRF model with spatio-temporal smoothing
   states_spatial_filtered@data$Agegroup <- as.factor(states_spatial_filtered@data$Agegroup)
   model_gamx1 <- gam(MDR ~ 
-                       s(Year, m=3, k=10, bs = "tp") +   # Smooth term for Year
-                       s(GEOID, bs = 'mrf', xt = list(nb = nb)) +  # Smooth term for GEOID
-                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb))) +
-                       Agegroup +  
-                       Year:Agegroup, # Interaction term
+                       s(Year, by = Agegroup, m=3, k=10, bs = "tp") +   # Smooth term for Year
+                       s(GEOID, by = Agegroup, bs = 'mrf', xt = list(nb = nb)) +  # Smooth term for GEOID
+                       te(Year, GEOID, bs=c("tp", "mrf"), m=c(3, NA), xt=list(Year=NULL, GEOID=list(nb=nb)), by= Agegroup),  
+                       #Year:Agegroup, # Interaction term
                      data = states_spatial_filtered@data,
                      family = binomial, 
                      select = TRUE,
@@ -5198,7 +8639,7 @@ compute_and_plot_predictionsGen <- function(data, model_output, years_range, ori
     labs(title = "",
          subtitle = "",
          x = "Year",
-         y = "Predicted resistance (%)") +
+         y = "Estimated resistance (%)") +
     theme_minimal(base_size = 14) +  # Base font size adjustment for better readability
     theme(legend.position = "bottom",  # Adjust legend positioning
           legend.title = element_blank(),  # Remove legend title
@@ -5252,7 +8693,7 @@ compute_and_plot_predictionsGenmdr <- function(data, model_output, years_range, 
     labs(title = "",
          subtitle = "",
          x = "Year",
-         y = "Predicted resistance (%)") +
+         y = "Estimated resistance (%)") +
     theme_minimal(base_size = 14) +  # Base font size adjustment for better readability
     theme(legend.position = "bottom",  # Adjust legend positioning
           legend.title = element_blank(),  # Remove legend title
@@ -5357,7 +8798,7 @@ compute_and_plot_predictionsAgeg <- function(data, model_output, years_range, or
           plot.subtitle = element_text(hjust = 0.5),  # Center the subtitle
           axis.text = element_text(size = 12),  # Adjust axis text size
           axis.title = element_text(size = 11))  # Adjust axis title size
-  
+  #View(predictions_summary)
 }
 compute_and_plot_predictionsAgegmdr <- function(data, model_output, years_range, original_geo_levels) {
   # Convert Year to numeric
@@ -5537,7 +8978,7 @@ incomedata<-x
 load("/Users/lsh1807578/CISS Dropbox/kasim allel henriquez/B_Projects/0_UniversityofOxford/Vivli/data/data/data_covariates/inform.work.RDATA")
 inform.work<-x
 
-load("/Users/lsh1807578/CISS Dropbox/kasim allel henriquez/B_Projects/0_UniversityofOxford/Vivli/data/data/Outputs/ATLAS/popdata.RDATA")
+load("/Users/lsh1807578/CISS Dropbox/kasim allel henriquez/B_Projects/0_UniversityofOxford/Vivli/data/data/data_covariates/popdata.RDATA")
 popdata<-x
 
 load("/Users/lsh1807578/CISS Dropbox/kasim allel henriquez/B_Projects/0_UniversityofOxford/Vivli/data/data/data_covariates/vacc_cov_comb.RDATA")
@@ -5555,6 +8996,13 @@ gramatb<-x
 
 load("/Users/lsh1807578/CISS Dropbox/kasim allel henriquez/B_Projects/0_UniversityofOxford/Vivli/data/data/data_covariates/gram.did.RDATA")
 gram_did<-x
+
+
+library(openxlsx)
+esac_dataAll <- read.xlsx("/Users/lsh1807578/CISS Dropbox/kasim allel henriquez/B_Projects/0_UniversityofOxford/Vivli/data/data//ESAC.xlsx", sheet = 'Data')
+
+library(openxlsx)
+esac_data <- read.xlsx("/Users/lsh1807578/CISS Dropbox/kasim allel henriquez/B_Projects/0_UniversityofOxford/Vivli/data/data//abx_spEU.xlsx")
 
 
 #######
@@ -5577,8 +9025,16 @@ gram_did2<- gram_did2 %>%
   filter(ihme_country_name %in% countries_list_eu_includ,  
          year >= 2004 & year <= 2022)
 
+gram_did_us<-gram_did %>%
+  filter(year >= 2004 & year <= 2022)
+  
+gram_did_us<- gram_did_us %>%
+  filter(ihme_country_name=="United States of America")
+gram_did_us$NAME <- gram_did_us$ihme_country_name
+gram_did_us$Year <- gram_did_us$year
+
 gram_did2neth<- gram_did2 %>%
-  filter(ihme_country_name=="Netherlands")
+  filter(ihme_country_name=="Germany")
 gram_did2$NAME <- gram_did2$ihme_country_name
 gram_did2$Year <- gram_did2$year
 #Dataframes with the data:
@@ -5613,7 +9069,7 @@ dataframe_list$Carb_changep_EU$ChangePsecondfirst
 
 dataframe_list$Cephalos_changep_EU$ChangePsecond
 dataframe_list$Cephalos_changep_EU$ChangePsecondfirst
-#######
+
 #average DID per year in Europe.
 average_did_per_year <- gram_did2 %>%
   group_by(Year) %>%  # Group data by the Year column
@@ -5666,25 +9122,37 @@ predictions_firstline_EU <- merge(predictions_firstline_EU, unique_GEOID_data, b
 predictions_mdr_EU <- gam_predictions(model_output_mdr_eu$sf, newdata = pred_data)
 predictions_mdr_EU <- merge(predictions_mdr_EU, unique_GEOID_data, by = "GEOID", all.x = TRUE)
 
-merged_dataCarb_EU <- merge(gram_did2x, Carb_predictions_grat, by = c("NAME", "Year"))
-merged_dataCephalos_EU <- merge(gram_did2x, Ceph_predictions_grat, by = c("NAME", "Year"))
-merged_datafirstline_EU <- merge(gram_did2x,Firstl_predictions_grat, by = c("NAME", "Year"))
-merged_datamdr_EU <- merge(gram_did2x, MDR_predictions_grat, by = c("NAME", "Year"))
-
+#esac_data <- read.xlsx("/Users/lsh1807578/CISS Dropbox/kasim allel henriquez/B_Projects/0_UniversityofOxford/Vivli/data/data//ESAC.xlsx", sheet = 'Data')
+esac_data$NAME<- esac_data$Country
+merged_dataCarb_EU <- merge(esac_data, Carb_predictions_grat, by = c("NAME", "Year"))
+merged_dataCephalos_EU <- merge(esac_data, Cephalos_predictions_grat, by = c("NAME", "Year"))
+merged_datafirstline_EU <- merge(esac_data,firstline_predictions_grat, by = c("NAME", "Year"))
+merged_datamdr_EU <- merge(esac_data, mdr_predictions_grat, by = c("NAME", "Year"))
+#####
 library(glmnet)
 library(knitr)
 antibiotics_xx <- c("did_total", "j01a_tet", "j01c_pen", "j01d_beta", "j01e_sulpha", "j01f_macro", "j01g_amino", "j01m_quin")
 ##Generating data for ATBs & controls for GAMs#######
+library(openxlsx)
+esac_data <- read.xlsx("/Users/lsh1807578/CISS Dropbox/kasim allel henriquez/B_Projects/0_UniversityofOxford/Vivli/data/data//abx_spEU.xlsx")
+
+merged_dataCarb_EU <- merge(esac_data, Carb_predictions_grat, by = c("NAME", "Year"))
+merged_dataCephalos_EU <- merge(esac_data, Cephalos_predictions_grat, by = c("NAME", "Year"))
+
 merged_dataCarb_EU <- merged_dataCarb_EU %>% 
   arrange(NAME,Year)
 merged_dataCarb_EU <- merged_dataCarb_EU %>%
   group_by(NAME) %>%
-  mutate(pct_change_did_total = (did_total - lag(did_total)) / lag(did_total) * 100) %>%
+  mutate(pct_change_did_total = (JO1DHDID_1000 - lag(JO1DHDID_1000)) / lag(JO1DHDID_1000) * 100) %>%
   mutate(pct_change_did_total = replace_na(pct_change_did_total, 0))
-merged_dataCarb_EU <- merged_dataCarb_EU %>%
+
+
+merged_dataCephalos_EU <- merged_dataCephalos_EU %>% 
+  arrange(NAME,Year)
+merged_dataCephalos_EU <- merged_dataCephalos_EU %>%
   group_by(NAME) %>%
-  mutate(pct_change_blact_total = (j01d_beta - lag(j01d_beta)) / lag(j01d_beta) * 100) %>%
-  mutate(pct_change_blact_total = replace_na(pct_change_blact_total, 0))
+  mutate(pct_change_did_total = (JO1DDDID_1000 - lag(JO1DDDID_1000)) / lag(JO1DDDID_1000) * 100) %>%
+  mutate(pct_change_did_total = replace_na(pct_change_did_total, 0))
 
 
 ########
@@ -5703,35 +9171,87 @@ gam_predictions2 <- function(gam_model, newdata) {
 }
 
 #----------------------------------#
-#PREDICTIONS FOR DID
+#PREDICTIONS FOR DID & b-lactams, CRE
 #----------------------------------#
 ######
-model_output_merged_dataCarb_EU <- gam(growth_rate2 ~ 
-                     s(did_total, m=3, k=k, bs = "tp") +
-                     s(pct_change_did_total, m=3, k=k, bs = "tp") +
-                     t2(did_total, pct_change_did_total),
-                   data = merged_dataCarb_EU,
-                   family = gaussian, 
-                   select = TRUE,
-                   method = "REML")
+set.seed(123)
+# Remove any leading/trailing spaces and ensure only numeric values remain
+merged_dataCarb_EU$growth_rate2 <- trimws(merged_dataCarb_EU$growth_rate2)         # Remove leading/trailing whitespace
+merged_dataCarb_EU$growth_rate2 <- gsub("[^0-9.-]", "", merged_dataCarb_EU$growth_rate2)  # Remove non-numeric characters
+merged_dataCarb_EU$growth_rate2 <- as.numeric(merged_dataCarb_EU$growth_rate2)
+summary(merged_dataCarb_EU$growth_rate2)  # Should show min, max, etc., without all NAs
+
+merged_dataCarb_EU$pct_change_did_total[merged_dataCarb_EU$pct_change_did_total == 0] <- NA
+merged_dataCarb_EU$pct_change_did_total[merged_dataCarb_EU$pct_change_did_total >90 ] <- 92.24
+merged_dataCarb_EU$JO1DHDID_1000_scaled <- scale(merged_dataCarb_EU$JO1DHDID_1000)
+merged_dataCarb_EU$pct_change_did_total_scaled <- scale(merged_dataCarb_EU$pct_change_did_total)
+
+model_output_merged_dataCarb_EU <- gam(
+  growth_rate2 ~ 
+    s(JO1DHDID_1000, m = 3, k = k, bs = "tp") +  
+    s(pct_change_did_total, m = 3, k = k, bs = "tp") + 
+    t2(JO1DHDID_1000, pct_change_did_total),
+  data = merged_dataCarb_EU,
+  family = gaussian,
+  select = TRUE,
+  method = "REML"
+)
+
+merged_dataCarb_EU$predicted_growth_rate2 <- predict(
+  model_output_merged_dataCarb_EU, 
+  newdata = merged_dataCarb_EU, 
+  type = "response"
+)
+predictions <- predict(
+  model_output_merged_dataCarb_EU, 
+  newdata = merged_dataCarb_EU, 
+  type = "response", 
+  se.fit = TRUE
+)
+merged_dataCarb_EU$predicted_growth_rate2 <- predictions$fit
+merged_dataCarb_EU$predicted_lower <- predictions$fit - 1.96 * predictions$se.fit
+merged_dataCarb_EU$predicted_upper <- predictions$fit + 1.96 * predictions$se.fit
+ggplot(merged_dataCarb_EU, aes(x = JO1DHDID_1000, y = predicted_growth_rate2)) +
+  geom_point(color = "blue", alpha = 0.6) +  # Observed values
+  geom_smooth(method = "loess", color = "red", se = TRUE, span = 0.75) +  # Polynomial smooth
+  labs(
+    title = "",
+    x = "DIDs per 1000 inhabitants (J01)",
+    y = "Estimated Growth Rate"
+  ) +
+  theme_minimal()
+
+
+
+
+
+
+
 
 set.seed(123)  # for reproducibility
-summary(merged_dataCarb_EU$j01d_beta)
-summary(merged_dataCarb_EU$pct_change_blact_total)
 new_data_frame <- data.frame(
-  did_total = rnorm(n = 100, mean = mean(merged_dataCarb_EU$did_total), sd = sd(merged_dataCarb_EU$did_total)),  # Normal distribution
+  did_total = rnorm(n = 1000, mean = mean(merged_dataCarb_EU$JO1DHDID_1000), sd = sd(merged_dataCarb_EU$JO1DHDID_1000)),  # Normal distribution
   pct_change_did_total = rnorm(n = 1000, mean = mean(merged_dataCarb_EU$pct_change_did_total), sd = sd(merged_dataCarb_EU$pct_change_did_total))  # Normal distribution
 )
 new_data_frame <- expand.grid(
-  #did_total = seq(0, 50, by = 1)  # Sequence from 0 to 40 by 1
-  pct_change_did_total = seq(-30, 30, by = 1)  # Sequence from 0 to 30 by 1
+  JO1DHDID_1000 = seq(0, 0.6, by = 0.01),  # Sequence from 0 to 40 by 1
+  pct_change_did_total = seq(-60, 60, by = 1)  # Sequence from 0 to 30 by 1
 )
-predictions_carb_EU_did <- gam_predictions2(model_output_merged_dataCarb_EU, new_data_frame)
-predictions_carb_EU_did$pred<- predictions_carb_EU_did$pred/100
-predictions_carb_EU_did$pred_lower<- predictions_carb_EU_did$pred_lower/100
-predictions_carb_EU_did$pred_upper<- predictions_carb_EU_did$pred_upper/100
 
+pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by = 1),
+                         GEOID = original_geo_levels,
+                         JO1DHDID_1000= NA,
+                         pct_change_did_total = NA)
 
+pred_data <- merged_dataCarb_EU[, c("Year", "GEOID", "JO1DHDID_1000", "pct_change_did_total")]
+#pred_data <- pred_data[pred_data$Year != 2004, ]
+
+predictions_carb_EU_did <- gam_predictions2(model_output_merged_dataCarb_EU, pred_data)
+predictions_carb_EU_did$pred<- predictions_carb_EU_did$pred
+predictions_carb_EU_did$pred_lower<- predictions_carb_EU_did$pred_lower
+predictions_carb_EU_did$pred_upper<- predictions_carb_EU_did$pred_upper
+
+cor(predictions_carb_EU_did$JO1DHDID_1000, predictions_carb_EU_did$pred, method = "pearson")
 line_color <- "#FF3D1F"  # Watermelon color for the line
 ci_color <- "#FFB2A8"  # Lighter shade of watermelon for the confidence interval shading
   # Assuming your dataframe is named predictions_carb_EU_did and includes the necessary columns
@@ -5739,24 +9259,28 @@ ci_color <- "#FFB2A8"  # Lighter shade of watermelon for the confidence interval
 loess_pred <- loess(pred ~ pct_change_did_total, data = predictions_carb_EU_did, control = loess.control(surface = "direct"))
 loess_lower <- loess(pred_lower ~ pct_change_did_total, data = predictions_carb_EU_did, control = loess.control(surface = "direct"))
 loess_upper <- loess(pred_upper ~ pct_change_did_total, data = predictions_carb_EU_did, control = loess.control(surface = "direct"))
-did_total_seq <- data.frame(pct_change_did_total = seq(-40, 40, length.out = 400))
+did_total_seq <- data.frame(pct_change_did_total = seq(-20, 20, length.out = 400))
 smooth_predictions <- data.frame(
-  did_total = did_total_seq$pct_change_did_total,
+  did_total_pc = did_total_seq$pct_change_did_total,
+  #did_total = did_total_seq$did_total,
   smooth_pred = predict(loess_pred, newdata = did_total_seq),
   smooth_lower = predict(loess_lower, newdata = did_total_seq),
   smooth_upper = predict(loess_upper, newdata = did_total_seq)
 )
 library(ggplot2)
 # Plotting with shaded area between smoothed confidence intervals
-atb_did_total<- ggplot(smooth_predictions, aes(x = did_total)) +
+predictions_carb_EU_did <- predictions_carb_EU_did %>% arrange(JO1DHDID_1000)
+
+# Create the plot with sorted data
+atb_did_total <- ggplot(smooth_predictions, aes(x = did_total_pc)) +
   geom_ribbon(aes(ymin = smooth_lower, ymax = smooth_upper), fill = "#8FCB2F", alpha = 0.3) +
   geom_line(aes(y = smooth_pred), color = "#007100", size = 1.2, alpha = 0.8) +
-  labs(title = "H. Antibiotic use & CRE using GAMs",
-       x = "Percentage change of overall antibiotic usage (%)",
-       y = "Predicted growth rate for CRE (%)") +
+  labs(title = "A. Total AMU & CRE",
+       x = "Percentage change in total AMU (%)",
+       y = "Estimated growth rate for CRE (%)") +
   theme_minimal() +
   theme(
-    plot.title = element_text(color = "black", face = "bold", size=14, hjust = 0.0),
+    plot.title = element_text(color = "black", face = "bold", size = 14, hjust = 0.0),
     plot.background = element_rect(fill = "white", color = "white"),
     panel.background = element_rect(fill = "white", color = "white"),
     panel.grid.major = element_line(color = "white", size = 0.5),
@@ -5766,17 +9290,47 @@ atb_did_total<- ggplot(smooth_predictions, aes(x = did_total)) +
     legend.position = "none",
     text = element_text(size = 12, family = "Times New Roman"),
     axis.title.x = element_text(size = 12),
-    axis.title.y = element_text(size = 12)  ) +
-  xlim(-40, 40)
+    axis.title.y = element_text(size = 12)
+  )+    xlim(-20,20)
 
-######
+# Display the plot
+print(atb_did_total)
+atb_did_total
 
 
 
-#----------------------------------#
-#PREDICTIONS FOR Beta-lactams ######
-#----------------------------------#
-######
+##OBSERVED VALUES HERE BELOW:
+smoothed_values <- lowess(merged_dataCarb_EU$pct_change_did_total, merged_dataCarb_EU$growth_rate2, f = 0.5)
+# Add the smoothed values to the dataframe for plotting
+merged_dataCarb_EU$smoothed_growth_rate <- smoothed_values$y
+# Create the plot
+merged_dataCarb_EU222 <- merged_dataCarb_EU[merged_dataCarb_EU$Year != 2004, ]
+atb_did_tota2 <- ggplot(merged_dataCarb_EU222, aes(x = pct_change_did_total, y = growth_rate2)) +
+  geom_smooth(method = "loess", color = "#007100", fill = "#8FCB2F", size = 1.2, alpha = 0.3) +
+  labs(title = "A. Antibiotic use & CRE",
+       x = "Percentage change of overall antibiotic usage (%)",
+       y = "Predicted growth rate for CRE (%)") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(color = "black", face = "bold", size = 14, hjust = 0.0),
+    plot.background = element_rect(fill = "white", color = "white"),
+    panel.background = element_rect(fill = "white", color = "white"),
+    panel.grid.major = element_line(color = "white", size = 0.5),
+    panel.grid.minor = element_blank(),
+    axis.text = element_text(color = "#555555"),
+    axis.title = element_text(color = "#555555"),
+    legend.position = "none",
+    text = element_text(size = 12, family = "Times New Roman"),
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12)
+  ) 
+
+# Display the plot
+print(atb_did_tota2)
+
+
+#####
+###DO NOT USE ANYMORE###
 model_output_merged_dataCarb_EU2<- gam(growth_rate2 ~ 
                                         s(j01d_beta, m=3, k=k, bs = "tp") +
                                         s(pct_change_blact_total, m=3, k=k, bs = "tp") +
@@ -5787,12 +9341,13 @@ model_output_merged_dataCarb_EU2<- gam(growth_rate2 ~
                                       method = "REML")
 
 new_data_frame <- data.frame(
-  j01d_beta = rnorm(n = 100, mean = mean(merged_dataCarb_EU$j01d_beta), sd = sd(merged_dataCarb_EU$j01d_beta)),  # Normal distribution
+  j01d_beta = rnorm(n = 100, mean = mean(merged_dataCarb_EU$j01d_beta), sd = sd(merged_dataCarb_EU$j01d_beta)),
+  did_total = rnorm(n = 100, mean = mean(merged_dataCarb_EU$did_total), sd = sd(merged_dataCarb_EU$did_total)),# Normal distribution
   pct_change_blact_total = rnorm(n = 100, mean = mean(merged_dataCarb_EU$pct_change_blact_total), sd = sd(merged_dataCarb_EU$pct_change_blact_total))  # Normal distribution
 )
 predictions_carb_EU_blac <- gam_predictions2(model_output_merged_dataCarb_EU2, new_data_frame)
 predictions_carb_EU_blac$j01d_beta <- ifelse(predictions_carb_EU_blac$j01d_beta < 0, 0, predictions_carb_EU_blac$j01d_beta)
-
+#predictions_carb_EU_blac <- predictions_carb_EU_blac[predictions_carb_EU_blac$Year != 2004, ]
 
 line_color <- "#FF3D1F"  # Watermelon color for the line
   ci_color <- "#FFB2A8"  # Lighter shade of watermelon for the confidence interval shading
@@ -5801,7 +9356,7 @@ line_color <- "#FF3D1F"  # Watermelon color for the line
 loess_pred <- loess(pred ~ pct_change_blact_total, data = predictions_carb_EU_blac, control = loess.control(surface = "direct"))
 loess_lower <- loess(pred_lower ~ pct_change_blact_total, data = predictions_carb_EU_blac, control = loess.control(surface = "direct"))
 loess_upper <- loess(pred_upper ~ pct_change_blact_total, data = predictions_carb_EU_blac, control = loess.control(surface = "direct"))
-j01d_beta_seq <- data.frame(pct_change_blact_total = seq(0, 10, length.out = 300))
+j01d_beta_seq <- data.frame(pct_change_blact_total = seq(-50, 50, length.out = 300))
 smooth_predictions2 <- data.frame(
     j01d_beta = j01d_beta_seq$pct_change_blact_total,
     smooth_pred = predict(loess_pred, newdata = j01d_beta_seq),
@@ -5811,11 +9366,11 @@ smooth_predictions2 <- data.frame(
   library(ggplot2)
   # Plotting with shaded area between smoothed confidence intervals
   atb_j01d_beta_total<- ggplot(smooth_predictions2, aes(x = j01d_beta)) +
-    geom_ribbon(aes(ymin = smooth_lower, ymax = smooth_upper), fill = "#8FCB2F", alpha = 0.3) +
-    geom_line(aes(y = smooth_pred), color = "#007100", size = 1.2, alpha = 0.8) +
-    labs(title = "H. β-lactam use & CRE using GAMs",
-         x = "β-lactam use (j01d) in DIDs",
-         y = "Predicted carbapenem-resistance (%)") +
+    geom_ribbon(aes(ymin = smooth_lower, ymax = smooth_upper), fill = "#FFB2A8", alpha = 0.3) +
+    geom_line(aes(y = smooth_pred), color = "#FF3D1F", size = 1.2, alpha = 0.8) +
+    labs(title = "E. β-lactam use & CRE",
+         x = "Percentage change in β-lactam use (j01d) (%)",
+         y = "Predicted growth rate for CRE (%)") +
     theme_minimal() +
     theme(
       plot.title = element_text(color = "#555555", face = "bold", size=14, hjust = 0.0),
@@ -5828,14 +9383,526 @@ smooth_predictions2 <- data.frame(
       legend.position = "none",
       text = element_text(size = 12, family = "Times New Roman"),
       axis.title.x = element_text(size = 12),
-      axis.title.y = element_text(size = 12)  ) +
-    xlim(-10, 10)
+      axis.title.y = element_text(size = 12)  ) 
   
-  
+  #atb_did_tota2 atb_j01d_beta_tota
+combined_plotxox3 <- grid.arrange(atb_did_tota2, atb_j01d_beta_total, ncol = 1)
+# Display the plot
+ggsave(filename = "plot_GAMs_atbuse.tiff", plot = combined_plotxox3, device = "tiff", path = base_pathOut,
+       width = 9, height = 10, dpi = 500, units = "in")
+#####
 
-  
 
+#------------------------------------ #
+##Cephalos: GRAPH ####
 ######
+merged_dataCephalos_EU <- merged_dataCephalos_EU %>% 
+  arrange(NAME,Year)
+merged_dataCephalos_EU <- merged_dataCephalos_EU %>%
+  group_by(NAME) %>%
+  mutate(pct_change_did_total = (did_total - lag(did_total)) / lag(did_total) * 100) %>%
+  mutate(pct_change_did_total = replace_na(pct_change_did_total, 0))
+merged_dataCephalos_EU <- merged_dataCephalos_EU %>%
+  group_by(NAME) %>%
+  mutate(pct_change_blact_total = (j01d_beta - lag(j01d_beta)) / lag(j01d_beta) * 100) %>%
+  mutate(pct_change_blact_total = replace_na(pct_change_blact_total, 0))
+
+set.seed(123)
+# Remove any leading/trailing spaces and ensure only numeric values remain
+merged_dataCephalos_EU$growth_rate2 <- trimws(merged_dataCephalos_EU$growth_rate2)         # Remove leading/trailing whitespace
+merged_dataCephalos_EU$growth_rate2 <- gsub("[^0-9.-]", "", merged_dataCephalos_EU$growth_rate2)  # Remove non-numeric characters
+merged_dataCephalos_EU$growth_rate2 <- as.numeric(merged_dataCephalos_EU$growth_rate2)
+summary(merged_dataCephalos_EU$growth_rate2)  # Should show min, max, etc., without all NAs
+
+model_output_merged_dataCephalos_EU <- gam(growth_rate2 ~ 
+                                             s(did_total, m=3, k=k, bs = "tp") +
+                                             s(pct_change_did_total, m=3, k=k, bs = "tp") +
+                                             t2(did_total, pct_change_did_total),
+                                           data = merged_dataCephalos_EU,
+                                           family = gaussian, 
+                                           select = TRUE,
+                                           method = "REML")
+
+set.seed(123)  # for reproducibility
+summary(merged_dataCephalos_EU$j01d_beta)
+summary(merged_dataCephalos_EU$pct_change_blact_total)
+new_data_frame <- data.frame(
+  did_total = rnorm(n = 1000, mean = mean(merged_dataCephalos_EU$did_total), sd = sd(merged_dataCephalos_EU$did_total)),  # Normal distribution
+  pct_change_did_total = rnorm(n = 1000, mean = mean(merged_dataCephalos_EU$pct_change_did_total), sd = sd(merged_dataCephalos_EU$pct_change_did_total))  # Normal distribution
+)
+new_data_frame <- expand.grid(
+  did_total = seq(0, 50, by = 0.5),  # Sequence from 0 to 40 by 1
+  pct_change_did_total = seq(-60, 60, by = 1)  # Sequence from 0 to 30 by 1
+)
+
+pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by = 1),
+                         GEOID = original_geo_levels,
+                         did_total= NA,
+                         pct_change_did_total = NA)
+
+pred_data <- merged_dataCephalos_EU[, c("Year", "GEOID", "did_total", "pct_change_did_total")]
+#pred_data <- pred_data[pred_data$Year != 2004, ]
+
+predictions_Cephalos_EU_did <- gam_predictions2(model_output_merged_dataCephalos_EU, pred_data)
+predictions_Cephalos_EU_did$pred<- predictions_Cephalos_EU_did$pred
+predictions_Cephalos_EU_did$pred_lower<- predictions_Cephalos_EU_did$pred_lower
+predictions_Cephalos_EU_did$pred_upper<- predictions_Cephalos_EU_did$pred_upper
+
+line_color <- "#FF3D1F"  # Watermelon color for the line
+  ci_color <- "#FFB2A8"  # Lighter shade of watermelon for the confidence interval shading
+    # Assuming your dataframe is named predictions_Cephalos_EU_did and includes the necessary columns
+  # Plotting with a professional color palette
+  loess_pred <- loess(pred ~ pct_change_did_total, data = predictions_Cephalos_EU_did, control = loess.control(surface = "direct"))
+  loess_lower <- loess(pred_lower ~ pct_change_did_total, data = predictions_Cephalos_EU_did, control = loess.control(surface = "direct"))
+  loess_upper <- loess(pred_upper ~ pct_change_did_total, data = predictions_Cephalos_EU_did, control = loess.control(surface = "direct"))
+  did_total_seq <- data.frame(pct_change_did_total = seq(-20, 20, length.out = 400))
+  smooth_predictions <- data.frame(
+    did_total_pc = did_total_seq$pct_change_did_total,
+    smooth_pred = predict(loess_pred, newdata = did_total_seq),
+    smooth_lower = predict(loess_lower, newdata = did_total_seq),
+    smooth_upper = predict(loess_upper, newdata = did_total_seq)
+  )
+  library(ggplot2)
+  # Plotting with shaded area between smoothed confidence intervals
+  predictions_Cephalos_EU_did <- predictions_Cephalos_EU_did %>% arrange(did_total)
+  
+  # Create the plot with sorted data
+  atb_did_total_Cephalos <- ggplot(smooth_predictions, aes(x = did_total_pc)) +
+    geom_ribbon(aes(ymin = smooth_lower, ymax = smooth_upper), fill = "#8FCB2F", alpha = 0.3) +
+    geom_line(aes(y = smooth_pred), color = "#007100", size = 1.2, alpha = 0.8) +
+    labs(title = "B. Total AMU & 3GCRE",
+         x = "Percentage change in total AMU (%)",
+         y = "Predicted growth rate for 3GCRE (%)") +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(color = "black", face = "bold", size = 14, hjust = 0.0),
+      plot.background = element_rect(fill = "white", color = "white"),
+      panel.background = element_rect(fill = "white", color = "white"),
+      panel.grid.major = element_line(color = "white", size = 0.5),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(color = "#555555"),
+      axis.title = element_text(color = "#555555"),
+      legend.position = "none",
+      text = element_text(size = 12, family = "Times New Roman"),
+      axis.title.x = element_text(size = 12),
+      axis.title.y = element_text(size = 12)
+    )+    xlim(-20,20)
+  ggsave(filename = "plot_GAMs_atbuse_CephalosDID.tiff", plot = atb_did_total_Cephalos, device = "tiff", path = base_pathOut,
+         width = 9, height = 10, dpi = 500, units = "in")
+  
+  # PREDICTIONS FOR Beta-lactams
+# --
+  model_output_merged_dataCephalos_EU2 <- gam(growth_rate2 ~ 
+                                                s(j01d_beta, m=3, k=k, bs = "tp") +
+                                                s(pct_change_blact_total, m=3, k=k, bs = "tp") +
+                                                t2(j01d_beta, pct_change_blact_total),
+                                              data = merged_dataCephalos_EU,
+                                              family = gaussian, 
+                                              select = TRUE,
+                                              method = "REML")
+  
+  new_data_frame <- data.frame(
+    j01d_beta = rnorm(n = 100, mean = mean(merged_dataCephalos_EU$j01d_beta), sd = sd(merged_dataCephalos_EU$j01d_beta)),
+    did_total = rnorm(n = 100, mean = mean(merged_dataCephalos_EU$did_total), sd = sd(merged_dataCephalos_EU$did_total)),  # Normal distribution
+    pct_change_blact_total = rnorm(n = 100, mean = mean(merged_dataCephalos_EU$pct_change_blact_total), sd = sd(merged_dataCephalos_EU$pct_change_blact_total))  # Normal distribution
+  )
+  predictions_Cephalos_EU_blac <- gam_predictions2(model_output_merged_dataCephalos_EU2, new_data_frame)
+  predictions_Cephalos_EU_blac$j01d_beta <- ifelse(predictions_Cephalos_EU_blac$j01d_beta < 0, 0, predictions_Cephalos_EU_blac$j01d_beta)
+  #predictions_Cephalos_EU_blac <- predictions_Cephalos_EU_blac[predictions_Cephalos_EU_blac$Year != 2004, ]
+  
+  line_color <- "#FF3D1F"  # Watermelon color for the line
+    ci_color <- "#FFB2A8"  # Lighter shade of watermelon for the confidence interval shading
+      # Plotting with a professional color palette
+    loess_pred <- loess(pred ~ pct_change_blact_total, data = predictions_Cephalos_EU_blac, control = loess.control(surface = "direct"))
+    loess_lower <- loess(pred_lower ~ pct_change_blact_total, data = predictions_Cephalos_EU_blac, control = loess.control(surface = "direct"))
+    loess_upper <- loess(pred_upper ~ pct_change_blact_total, data = predictions_Cephalos_EU_blac, control = loess.control(surface = "direct"))
+    j01d_beta_seq <- data.frame(pct_change_blact_total = seq(-50, 50, length.out = 300))
+    smooth_predictions2 <- data.frame(
+      j01d_beta = j01d_beta_seq$pct_change_blact_total,
+      smooth_pred = predict(loess_pred, newdata = j01d_beta_seq),
+      smooth_lower = predict(loess_lower, newdata = j01d_beta_seq),
+      smooth_upper = predict(loess_upper, newdata = j01d_beta_seq)
+    )
+    library(ggplot2)
+    # Plotting with shaded area between smoothed confidence intervals
+    atb_j01d_beta_totalCephalos <- ggplot(smooth_predictions2, aes(x = j01d_beta)) +
+      geom_ribbon(aes(ymin = smooth_lower, ymax = smooth_upper), fill = "#FFB2A8", alpha = 0.3) +
+      geom_line(aes(y = smooth_pred), color = "#FF3D1F", size = 1.2, alpha = 0.8) +
+      labs(title = "F. β-lactam use & 3GCRE",
+           x = "Percentage change in β-lactam use (j01d) (%)",
+           y = "Predicted growth rate for 3GCRE (%)") +
+      theme_minimal() +
+      theme(
+        plot.title = element_text(color = "#555555", face = "bold", size=14, hjust = 0.0),
+        plot.background = element_rect(fill = "white", color = "white"),
+        panel.background = element_rect(fill = "white", color = "white"),
+        panel.grid.major = element_line(color = "white", size = 0.5),
+        panel.grid.minor = element_blank(),
+        axis.text = element_text(color = "#555555"),
+        axis.title = element_text(color = "#555555"),
+        legend.position = "none",
+        text = element_text(size = 12, family = "Times New Roman"),
+        axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12)
+      ) 
+    
+    # Display the plot
+    ggsave(filename = "plot_GAMs_atbusej01d_Cephalos.tiff", plot = atb_j01d_beta_totalCephalos, device = "tiff", path = base_pathOut,
+           width = 9, height = 10, dpi = 500, units = "in")
+    
+    
+#####
+
+#------------------------------------ #
+##Firstline: GRAPH ####
+#####
+    merged_dataFirstline_EU <- merged_datafirstline_EU %>%
+      arrange(NAME, Year) %>%
+      group_by(NAME) %>%
+      mutate(pct_change_did_total = (did_total - lag(did_total)) / lag(did_total) * 100) %>%
+      mutate(pct_change_did_total = replace_na(pct_change_did_total, 0))
+    
+    merged_dataFirstline_EU <- merged_dataFirstline_EU %>%
+      group_by(NAME) %>%
+      mutate(pct_change_blact_total = (j01d_beta - lag(j01d_beta)) / lag(j01d_beta) * 100) %>%
+      mutate(pct_change_blact_total = replace_na(pct_change_blact_total, 0))
+    
+    set.seed(123)
+    # Remove any leading/trailing spaces and ensure only numeric values remain
+    merged_dataFirstline_EU$growth_rate2 <- trimws(merged_dataFirstline_EU$growth_rate2)         # Remove leading/trailing whitespace
+    merged_dataFirstline_EU$growth_rate2 <- gsub("[^0-9.-]", "", merged_dataFirstline_EU$growth_rate2)  # Remove non-numeric characters
+    merged_dataFirstline_EU$growth_rate2 <- as.numeric(merged_dataFirstline_EU$growth_rate2)
+    summary(merged_dataFirstline_EU$growth_rate2)  # Should show min, max, etc., without all NAs
+    
+    model_output_merged_dataFirstline_EU <- gam(growth_rate2 ~ 
+                                                  s(did_total, m=3, k=k, bs = "tp") +
+                                                  s(pct_change_did_total, m=3, k=k, bs = "tp") +
+                                                  t2(did_total, pct_change_did_total),
+                                                data = merged_dataFirstline_EU,
+                                                family = gaussian, 
+                                                select = TRUE,
+                                                method = "REML")
+    
+    set.seed(123)  # for reproducibility
+    summary(merged_dataFirstline_EU$j01d_beta)
+    summary(merged_dataFirstline_EU$pct_change_blact_total)
+    
+    new_data_frame <- data.frame(
+      did_total = rnorm(n = 1000, mean = mean(merged_dataFirstline_EU$did_total), sd = sd(merged_dataFirstline_EU$did_total)),  # Normal distribution
+      pct_change_did_total = rnorm(n = 1000, mean = mean(merged_dataFirstline_EU$pct_change_did_total), sd = sd(merged_dataFirstline_EU$pct_change_did_total))  # Normal distribution
+    )
+    
+    new_data_frame <- expand.grid(
+      did_total = seq(0, 50, by = 0.5),  # Sequence from 0 to 40 by 1
+      pct_change_did_total = seq(-60, 60, by = 1)  # Sequence from 0 to 30 by 1
+    )
+    
+    pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by = 1),
+                             GEOID = original_geo_levels,
+                             did_total= NA,
+                             pct_change_did_total = NA)
+    
+    pred_data <- merged_dataFirstline_EU[, c("Year", "GEOID", "did_total", "pct_change_did_total")]
+    pred_data <- pred_data[pred_data$Year != 2004, ]
+    
+    predictions_Firstline_EU_did <- gam_predictions2(model_output_merged_dataFirstline_EU, pred_data)
+    predictions_Firstline_EU_did$pred <- predictions_Firstline_EU_did$pred
+    predictions_Firstline_EU_did$pred_lower <- predictions_Firstline_EU_did$pred_lower
+    predictions_Firstline_EU_did$pred_upper <- predictions_Firstline_EU_did$pred_upper
+    
+    line_color <- "#FF3D1F"  # Watermelon color for the line
+      ci_color <- "#FFB2A8"  # Lighter shade of watermelon for the confidence interval shading
+        # Plotting with a professional color palette
+      loess_pred <- loess(pred ~ pct_change_did_total, data = predictions_Firstline_EU_did, control = loess.control(surface = "direct"))
+      loess_lower <- loess(pred_lower ~ pct_change_did_total, data = predictions_Firstline_EU_did, control = loess.control(surface = "direct"))
+      loess_upper <- loess(pred_upper ~ pct_change_did_total, data = predictions_Firstline_EU_did, control = loess.control(surface = "direct"))
+      did_total_seq <- data.frame(pct_change_did_total = seq(-20, 20, length.out = 400))
+      smooth_predictions <- data.frame(
+        did_total_pc = did_total_seq$pct_change_did_total,
+        smooth_pred = predict(loess_pred, newdata = did_total_seq),
+        smooth_lower = predict(loess_lower, newdata = did_total_seq),
+        smooth_upper = predict(loess_upper, newdata = did_total_seq)
+      )
+      library(ggplot2)
+      # Plotting with shaded area between smoothed confidence intervals
+      predictions_Firstline_EU_did <- predictions_Firstline_EU_did %>% arrange(did_total)
+      
+      # Create the plot with sorted data
+      atb_did_total_Firstline <- ggplot(smooth_predictions, aes(x = did_total_pc)) +
+        geom_ribbon(aes(ymin = smooth_lower, ymax = smooth_upper), fill = "#8FCB2F", alpha = 0.3) +
+        geom_line(aes(y = smooth_pred), color = "#007100", size = 1.2, alpha = 0.8) +
+        labs(title = "C. Total AMU & first-line AMR*",
+             x = "Percentage change in total AMU (%)",
+             y = "Predicted growth rate for first-line AMR* (%)") +
+        theme_minimal() +
+        theme(
+          plot.title = element_text(color = "black", face = "bold", size = 14, hjust = 0.0),
+          plot.background = element_rect(fill = "white", color = "white"),
+          panel.background = element_rect(fill = "white", color = "white"),
+          panel.grid.major = element_line(color = "white", size = 0.5),
+          panel.grid.minor = element_blank(),
+          axis.text = element_text(color = "#555555"),
+          axis.title = element_text(color = "#555555"),
+          legend.position = "none",
+          text = element_text(size = 12, family = "Times New Roman"),
+          axis.title.x = element_text(size = 12),
+          axis.title.y = element_text(size = 12)
+        ) + xlim(-20, 20)
+      ggsave(filename = "plot_GAMs_atbuse_FirstlineDID.tiff", plot = atb_did_total_Firstline, device = "tiff", path = base_pathOut,
+             width = 9, height = 10, dpi = 500, units = "in")
+
+
+      
+      # PREDICTIONS FOR Beta-lactams
+      model_output_merged_dataFirstline_EU2 <- gam(growth_rate2 ~ 
+                                                     s(j01d_beta, m=3, k=k, bs = "tp") +
+                                                     s(pct_change_blact_total, m=3, k=k, bs = "tp") +
+                                                     t2(j01d_beta, pct_change_blact_total),
+                                                   data = merged_dataFirstline_EU,
+                                                   family = gaussian, 
+                                                   select = TRUE,
+                                                   method = "REML")
+      
+      new_data_frame <- data.frame(
+        j01d_beta = rnorm(n = 100, mean = mean(merged_dataFirstline_EU$j01d_beta), sd = sd(merged_dataFirstline_EU$j01d_beta)),
+        did_total = rnorm(n = 100, mean = mean(merged_dataFirstline_EU$did_total), sd = sd(merged_dataFirstline_EU$did_total)),  # Normal distribution
+        pct_change_blact_total = rnorm(n = 100, mean = mean(merged_dataFirstline_EU$pct_change_blact_total), sd = sd(merged_dataFirstline_EU$pct_change_blact_total))  # Normal distribution
+      )
+      
+      predictions_Firstline_EU_blac <- gam_predictions2(model_output_merged_dataFirstline_EU2, new_data_frame)
+      predictions_Firstline_EU_blac$j01d_beta <- ifelse(predictions_Firstline_EU_blac$j01d_beta < 0, 0, predictions_Firstline_EU_blac$j01d_beta)
+      
+      line_color <- "#FF3D1F"  # Watermelon color for the line
+        ci_color <- "#FFB2A8"  # Lighter shade of watermelon for the confidence interval shading
+          # Plotting with a professional color palette
+        loess_pred <- loess(pred ~ pct_change_blact_total, data = predictions_Firstline_EU_blac, control = loess.control(surface = "direct"))
+        loess_lower <- loess(pred_lower ~ pct_change_blact_total, data = predictions_Firstline_EU_blac, control = loess.control(surface = "direct"))
+        loess_upper <- loess(pred_upper ~ pct_change_blact_total, data = predictions_Firstline_EU_blac, control = loess.control(surface = "direct"))
+        j01d_beta_seq <- data.frame(pct_change_blact_total = seq(-50, 50, length.out = 300))
+        smooth_predictions2 <- data.frame(
+          j01d_beta = j01d_beta_seq$pct_change_blact_total,
+          smooth_pred = predict(loess_pred, newdata = j01d_beta_seq),
+          smooth_lower = predict(loess_lower, newdata = j01d_beta_seq),
+          smooth_upper = predict(loess_upper, newdata = j01d_beta_seq)
+        )
+        library(ggplot2)
+        # Plotting with shaded area between smoothed confidence intervals
+        atb_j01d_beta_totalFirstline <- ggplot(smooth_predictions2, aes(x = j01d_beta)) +
+          geom_ribbon(aes(ymin = smooth_lower, ymax = smooth_upper), fill = "#FFB2A8", alpha = 0.3) +
+          geom_line(aes(y = smooth_pred), color = "#FF3D1F", size = 1.2, alpha = 0.8) +
+          labs(title = "G. β-lactam use & first-line AMR*",
+               x = "Percentage change in β-lactam use (j01d) (%)",
+               y = "Predicted growth rate for first-line AMR* (%)") +
+          theme_minimal() +
+          theme(
+            plot.title = element_text(color = "#555555", face = "bold", size=14, hjust = 0.0),
+            plot.background = element_rect(fill = "white", color = "white"),
+            panel.background = element_rect(fill = "white", color = "white"),
+            panel.grid.major = element_line(color = "white", size = 0.5),
+            panel.grid.minor = element_blank(),
+            axis.text = element_text(color = "#555555"),
+            axis.title = element_text(color = "#555555"),
+            legend.position = "none",
+            text = element_text(size = 12, family = "Times New Roman"),
+            axis.title.x = element_text(size = 12),
+            axis.title.y = element_text(size = 12)
+          )  
+        
+        # Display the plot
+        ggsave(filename = "plot_GAMs_atbuseJ01d_Firstline.tiff", plot = atb_j01d_beta_totalFirstline, device = "tiff", path = base_pathOut,
+               width = 9, height = 10, dpi = 500, units = "in")
+        
+
+#####    
+
+#------------------------------------ #
+##mdr: GRAPH ####
+######
+        merged_dataMdr_EU <- merged_datamdr_EU %>%
+          arrange(NAME, Year) %>%
+          group_by(NAME) %>%
+          mutate(pct_change_did_total = (did_total - lag(did_total)) / lag(did_total) * 100) %>%
+          mutate(pct_change_did_total = replace_na(pct_change_did_total, 0))
+        
+        merged_dataMdr_EU <- merged_dataMdr_EU %>%
+          group_by(NAME) %>%
+          mutate(pct_change_blact_total = (j01d_beta - lag(j01d_beta)) / lag(j01d_beta) * 100) %>%
+          mutate(pct_change_blact_total = replace_na(pct_change_blact_total, 0))
+        
+        set.seed(123)
+        # Remove any leading/trailing spaces and ensure only numeric values remain
+        merged_dataMdr_EU$growth_rate2 <- trimws(merged_dataMdr_EU$growth_rate2)         # Remove leading/trailing whitespace
+        merged_dataMdr_EU$growth_rate2 <- gsub("[^0-9.-]", "", merged_dataMdr_EU$growth_rate2)  # Remove non-numeric characters
+        merged_dataMdr_EU$growth_rate2 <- as.numeric(merged_dataMdr_EU$growth_rate2)
+        summary(merged_dataMdr_EU$growth_rate2)  # Should show min, max, etc., without all NAs
+        
+        model_output_merged_dataMdr_EU <- gam(growth_rate2 ~ 
+                                                s(did_total, m=3, k=k, bs = "tp") +
+                                                s(pct_change_did_total, m=3, k=k, bs = "tp") +
+                                                t2(did_total, pct_change_did_total),
+                                              data = merged_dataMdr_EU,
+                                              family = gaussian, 
+                                              select = TRUE,
+                                              method = "REML")
+        
+        set.seed(123)  # for reproducibility
+        summary(merged_dataMdr_EU$j01d_beta)
+        summary(merged_dataMdr_EU$pct_change_blact_total)
+        new_data_frame <- data.frame(
+          did_total = rnorm(n = 1000, mean = mean(merged_dataMdr_EU$did_total), sd = sd(merged_dataMdr_EU$did_total)),  # Normal distribution
+          pct_change_did_total = rnorm(n = 1000, mean = mean(merged_dataMdr_EU$pct_change_did_total), sd = sd(merged_dataMdr_EU$pct_change_did_total))  # Normal distribution
+        )
+        new_data_frame <- expand.grid(
+          did_total = seq(0, 50, by = 0.5),  # Sequence from 0 to 40 by 1
+          pct_change_did_total = seq(-60, 60, by = 1)  # Sequence from 0 to 30 by 1
+        )
+        
+        pred_data <- expand.grid(Year = seq(min(new_data$Year), max(new_data$Year), by = 1),
+                                 GEOID = original_geo_levels,
+                                 did_total= NA,
+                                 pct_change_did_total = NA)
+        
+        pred_data <- merged_dataMdr_EU[, c("Year", "GEOID", "did_total", "pct_change_did_total")]
+        pred_data <- pred_data[pred_data$Year != 2004, ]
+        
+        predictions_Mdr_EU_did <- gam_predictions2(model_output_merged_dataMdr_EU, pred_data)
+        predictions_Mdr_EU_did$pred <- predictions_Mdr_EU_did$pred
+        predictions_Mdr_EU_did$pred_lower <- predictions_Mdr_EU_did$pred_lower
+        predictions_Mdr_EU_did$pred_upper <- predictions_Mdr_EU_did$pred_upper
+        
+        line_color <- "#FF3D1F"  # Watermelon color for the line
+          ci_color <- "#FFB2A8"  # Lighter shade of watermelon for the confidence interval shading
+            # Plotting with a professional color palette
+          loess_pred <- loess(pred ~ pct_change_did_total, data = predictions_Mdr_EU_did, control = loess.control(surface = "direct"))
+          loess_lower <- loess(pred_lower ~ pct_change_did_total, data = predictions_Mdr_EU_did, control = loess.control(surface = "direct"))
+          loess_upper <- loess(pred_upper ~ pct_change_did_total, data = predictions_Mdr_EU_did, control = loess.control(surface = "direct"))
+          did_total_seq <- data.frame(pct_change_did_total = seq(-20, 20, length.out = 400))
+          smooth_predictions <- data.frame(
+            did_total_pc = did_total_seq$pct_change_did_total,
+            smooth_pred = predict(loess_pred, newdata = did_total_seq),
+            smooth_lower = predict(loess_lower, newdata = did_total_seq),
+            smooth_upper = predict(loess_upper, newdata = did_total_seq)
+          )
+          library(ggplot2)
+          # Plotting with shaded area between smoothed confidence intervals
+          predictions_Mdr_EU_did <- predictions_Mdr_EU_did %>% arrange(did_total)
+          
+          # Create the plot with sorted data
+          atb_did_total_Mdr <- ggplot(smooth_predictions, aes(x = did_total_pc)) +
+            geom_ribbon(aes(ymin = smooth_lower, ymax = smooth_upper), fill = "#8FCB2F", alpha = 0.3) +
+            geom_line(aes(y = smooth_pred), color = "#007100", size = 1.2, alpha = 0.8) +
+            labs(title = "D. Total AMU & MDR",
+                 x = "Percentage change in total AMU (%)",
+                 y = "Predicted growth rate for MDR (%)") +
+            theme_minimal() +
+            theme(
+              plot.title = element_text(color = "black", face = "bold", size = 14, hjust = 0.0),
+              plot.background = element_rect(fill = "white", color = "white"),
+              panel.background = element_rect(fill = "white", color = "white"),
+              panel.grid.major = element_line(color = "white", size = 0.5),
+              panel.grid.minor = element_blank(),
+              axis.text = element_text(color = "#555555"),
+              axis.title = element_text(color = "#555555"),
+              legend.position = "none",
+              text = element_text(size = 12, family = "Times New Roman"),
+              axis.title.x = element_text(size = 12),
+              axis.title.y = element_text(size = 12)
+            ) + xlim(-20, 20)
+          ggsave(filename = "plot_GAMs_atbuse_MdrDID_didtot.tiff", plot = atb_did_total_Mdr, device = "tiff", path = base_pathOut,
+                 width = 9, height = 10, dpi = 500, units = "in")
+  
+          
+          # PREDICTIONS FOR Beta-lactams
+         
+          model_output_merged_dataMdr_EU2 <- gam(growth_rate2 ~ 
+                                                   s(j01d_beta, m=3, k=k, bs = "tp") +
+                                                   s(pct_change_blact_total, m=3, k=k, bs = "tp") +
+                                                   t2(j01d_beta, pct_change_blact_total),
+                                                 data = merged_dataMdr_EU,
+                                                 family = gaussian, 
+                                                 select = TRUE,
+                                                 method = "REML")
+          
+          new_data_frame <- data.frame(
+            j01d_beta = rnorm(n = 100, mean = mean(merged_dataMdr_EU$j01d_beta), sd = sd(merged_dataMdr_EU$j01d_beta)),
+            did_total = rnorm(n = 100, mean = mean(merged_dataMdr_EU$did_total), sd = sd(merged_dataMdr_EU$did_total)),  # Normal distribution
+            pct_change_blact_total = rnorm(n = 100, mean = mean(merged_dataMdr_EU$pct_change_blact_total), sd = sd(merged_dataMdr_EU$pct_change_blact_total))  # Normal distribution
+          )
+          
+          predictions_Mdr_EU_blac <- gam_predictions2(model_output_merged_dataMdr_EU2, new_data_frame)
+          predictions_Mdr_EU_blac$j01d_beta <- ifelse(predictions_Mdr_EU_blac$j01d_beta < 0, 0, predictions_Mdr_EU_blac$j01d_beta)
+          
+          line_color <- "#FF3D1F"  # Watermelon color for the line
+            ci_color <- "#FFB2A8"  # Lighter shade of watermelon for the confidence interval shading
+              # Plotting with a professional color palette
+            loess_pred <- loess(pred ~ pct_change_blact_total, data = predictions_Mdr_EU_blac, control = loess.control(surface = "direct"))
+            loess_lower <- loess(pred_lower ~ pct_change_blact_total, data = predictions_Mdr_EU_blac, control = loess.control(surface = "direct"))
+            loess_upper <- loess(pred_upper ~ pct_change_blact_total, data = predictions_Mdr_EU_blac, control = loess.control(surface = "direct"))
+            j01d_beta_seq <- data.frame(pct_change_blact_total = seq(-50, 50, length.out = 300))
+            smooth_predictions2 <- data.frame(
+              j01d_beta = j01d_beta_seq$pct_change_blact_total,
+              smooth_pred = predict(loess_pred, newdata = j01d_beta_seq),
+              smooth_lower = predict(loess_lower, newdata = j01d_beta_seq),
+              smooth_upper = predict(loess_upper, newdata = j01d_beta_seq)
+            )
+            library(ggplot2)
+            # Plotting with shaded area between smoothed confidence intervals
+            atb_j01d_beta_totalMdr <- ggplot(smooth_predictions2, aes(x = j01d_beta)) +
+              geom_ribbon(aes(ymin = smooth_lower, ymax = smooth_upper), fill = "#FFB2A8", alpha = 0.3) +
+              geom_line(aes(y = smooth_pred), color = "#FF3D1F", size = 1.2, alpha = 0.8) +
+              labs(title = "H. β-lactam use & MDR",
+                   x = "Percentage change in β-lactam use (j01d) (%)",
+                   y = "Predicted growth rate for MDR (%)") +
+              theme_minimal() +
+              theme(
+                plot.title = element_text(color = "#555555", face = "bold", size=14, hjust = 0.0),
+                plot.background = element_rect(fill = "white", color = "white"),
+                panel.background = element_rect(fill = "white", color = "white"),
+                panel.grid.major = element_line(color = "white", size = 0.5),
+                panel.grid.minor = element_blank(),
+                axis.text = element_text(color = "#555555"),
+                axis.title = element_text(color = "#555555"),
+                legend.position = "none",
+                text = element_text(size = 12, family = "Times New Roman"),
+                axis.title.x = element_text(size = 12),
+                axis.title.y = element_text(size = 12)
+              )
+            
+            # Display the plot
+            ggsave(filename = "plot_GAMs_atbuse_Mdrj01d.tiff", plot = atb_j01d_beta_totalMdr, device = "tiff", path = base_pathOut,
+                   width = 9, height = 10, dpi = 500, units = "in")
+            
+            
+      
+
+#####  
+
+combined_plotxox8 <- grid.arrange(atb_did_total, atb_did_total_Cephalos, atb_did_total_Firstline, atb_did_total_Mdr,
+                                  atb_j01d_beta_total, atb_j01d_beta_totalCephalos, atb_j01d_beta_totalFirstline, atb_j01d_beta_totalMdr, ncol = 4)
+ggsave(filename = "plot_GAMs_atbuseAll.tiff", plot = combined_plotxox8, device = "tiff", path = base_pathOut,
+                   width = 16, height = 9, dpi = 700, units = "in")            
+            
+
+
+cor(merged_dataCarb_EU$pred, merged_dataCarb_EU$did_total)
+cor(merged_dataCarb_EU$pred, merged_dataCarb_EU$j01d_beta)
+cor(merged_dataCephalos_EU$pred, merged_dataCephalos_EU$did_total)
+cor(merged_dataCephalos_EU$pred, merged_dataCephalos_EU$j01d_beta)
+cor(merged_dataFirstline_EU$pred, merged_dataFirstline_EU$did_total)
+cor(merged_dataFirstline_EU$pred, merged_dataFirstline_EU$j01d_beta)
+cor(merged_dataMdr_EU$pred, merged_dataMdr_EU$did_total)
+cor(merged_dataMdr_EU$pred, merged_dataMdr_EU$j01d_beta)
+
+
+cor(merged_dataCarb_EU$growth_rate2, merged_dataCarb_EU$pct_change_did_total,  use = "complete.obs")
+cor(merged_dataCarb_EU$growth_rate2, merged_dataCarb_EU$pct_change_blact_total,  use = "complete.obs")
+cor(merged_dataCephalos_EU$growth_rate2, merged_dataCephalos_EU$pct_change_did_total, use = "complete.obs" )
+cor(merged_dataCephalos_EU$growth_rate2, merged_dataCephalos_EU$pct_change_blact_total,  use = "complete.obs")
+cor(merged_dataFirstline_EU$growth_rate2, merged_dataFirstline_EU$pct_change_did_total, use = "complete.obs" )
+cor(merged_dataFirstline_EU$growth_rate2, merged_dataFirstline_EU$pct_change_blact_total,  use = "complete.obs")
+cor(merged_dataMdr_EU$growth_rate2, merged_dataMdr_EU$pct_change_did_total, use = "complete.obs" )
+cor(merged_dataMdr_EU$growth_rate2, merged_dataMdr_EU$pct_change_blact_total,  use = "complete.obs")
+#summary models#####
 
 
 # Initialize a list to store summaries
@@ -5874,11 +9941,6 @@ model_summaries_mdr_EU <- fit_and_summarize_models(merged_datamdr_EU, antibiotic
 
 
 #####
-
-
-
-
-
 #------------------------------------------------------------------------------------------------------#
 #------------------------------------------------------------------------------------------------------#
 #------------------------------------------------------------------------------------------------------#
@@ -5890,35 +9952,16 @@ model_summaries_mdr_EU <- fit_and_summarize_models(merged_datamdr_EU, antibiotic
 #------------------------------------------------------------------------------------------------------#
 #------------------------------------------------------------------------------------------------------#
 #------------------------------------------------------------------------------------------------------#
-#------------------------------------------------------------------------------------------------------#
+#---------------------FIGURE EXAMPLAR------------------------------------------------------------------#
 
-carbapenem_heatmap2ab<- carbapenem_heatmap2 +
-  theme(plot.title = element_text(hjust = 0, size = 14, face = "bold")) + labs(title = "A. CRE(%) 2004-22, Europe") 
-
-
-combined_plot_fig_examplar2 <- (carbapenem_heatmap2ab + plot_carbapenem_eu_fig1) / 
-  (ppred_alle2x + plot_resultGen_carb_EU2 ) / 
-  (netherlands_plot + p3nethelands) / 
-  (  did_total_plot+atb_did_total)  
-  
-
-
-#Configure orientation
-combined_plot_fig_examplar <- combined_plot_fig_examplar2 + 
-  plot_layout(ncol = 2, nrow = 2, heights = rep(2, 2)) + facet_wrap(~variable, scales = "free")
-
-# Print the combined plot to check the layout
-print(combined_plot_fig_examplar)
-# Save the combined plot
-ggsave(filename = "Figure_examplar.tiff", plot = combined_plot_fig_examplar, device = "tiff", path = base_pathOut,
-       width = 17, height = 10, dpi = 500, units = "in")
-
-
+#-----------------------------------------------------#
+#EUROPE CRE
+#-----------------------------------------------------#
 #PANEL B#######
 carbapenem_res_eu_avg <- calculate_averages(carbapenem_resistance_by_year_country_eu, "Country", Carbapenem_res)
 # Apply the function to calculate averages specifically for netherlands now
 carbapenem_res_eu_avg_ireland <- calculate_averages(
-  carbapenem_resistance_by_year_country_eu %>% filter(Country == 'Netherlands'), 
+  carbapenem_resistance_by_year_country_eu %>% filter(Country == 'Germany'), 
   "Country", 
   Carbapenem_res)
 # Define a color palette for Europe
@@ -5933,7 +9976,7 @@ plot_carbapenem_europe <- function(data, data_ireland) {
                position = position_dodge(width = 0.8), size = 1.5, alpha = 0.5) +
     scale_fill_manual(values = c("Europe" = "#d95f02")) +
     scale_color_manual(values = c("Each European country included" = "#d95f02"), name = "", labels = "Each European country included") +
-    labs(title = "B. CRE trends in Europe",
+    labs(title = "B. CRE trends, Europe",
          subtitle = "",
          x = "Year group", y = "Carbapenem-resistance (%)") +
     theme_minimal() +
@@ -5963,13 +10006,13 @@ plot_carbapenem_eu_fig1<-plot_carbapenem_eu_fig1 +
 
 ######
 #PANEL C#####
-netherlands_plot <- netherlands_plot +labs(title = "E. Predicted CRE, exemplar") +theme(plot.title = element_text(face = "bold"))
+netherlands_plot <- netherlands_plot +labs(title = "E. Estimated CRE, exemplar") +theme(plot.title = element_text(face = "bold"))
 ##Growth rate######
 p3nethelands<- p3nethelands +labs(title = "F. Growth rate, exemplar") +theme(plot.title = element_text(face = "bold"))
 #####
-###NethelerlandsDID total####
+###FranceDID total####
 gram_did2neth<- gram_did2 %>%
-  filter(ihme_country_name=="Netherlands")
+  filter(ihme_country_name=="France")
 library(hrbrthemes)  # For theme_ipsum()
 # Constants for the plot
 didTotalColor <- "#E76C3C"  # A reddish color for DID total
@@ -5984,43 +10027,42 @@ did_total_plot <- ggplot(gram_did2neth, aes(x = Year)) +
     geom_point(aes(y = j01d_beta * coeff), color = "black", size = 3, shape = 21, fill = j01dBetaColor) +  # Points for did_total
     scale_y_continuous(
       name = "Total antibiotic usage in DIDs",
-      limits = c(4, 12),  # Manual limits for the primary axis
-      breaks = seq(4, 12, by = 1),  # Adjust breaks as necessary
+      limits = c(9, 19),  # Manual limits for the primary axis
+      breaks = seq(10, 19, by = 1),  # Adjust breaks as necessary
       sec.axis = sec_axis(
         trans = ~ . / coeff, 
         name = "Other β-lactams (j01d) in DIDs",
-        breaks = seq(0.2, 0.6, by = 0.1)  # Adjust breaks as necessary for the secondary axis
+        breaks = seq(3.2,6.2, by = 0.3)  # Adjust breaks as necessary for the secondary axis
       )) +
     #theme_ipsum() +  # Clean theme with good defaults
     theme(
       axis.title.y = element_text(color = didTotalColor, size = 14, hjust = 0.5),
       axis.title.y.right = element_text(color = j01dBetaColor, size = 14,hjust = 0.5),
       plot.title = element_text(hjust = 0.0),
-      axis.title.x= element_text(size=13, hjust = 0.5),
-      text = element_text(size = 12, family = "Times New Roman")
+      axis.text.x= element_text(angle = 90, hjust = 1, vjust = 0.5),
+      text = element_text(size = 12, family = "Times New Roman"),
     ) +
     labs(
-      title = "G. Antibiotic use, exemplar",
+      title = "H. Antibiotic use, exemplar",
       x = "Year"
-    ) +scale_x_continuous(breaks = seq(2004, 2018, by = 2)) 
+    ) +scale_x_continuous(breaks = seq(2004, 2018, by = 1)) 
 
 
 did_total_plot<- did_total_plot+ facet_wrap(~ihme_country_name, scales = "free_y") +theme(plot.title = element_text(face = "bold"))
-did_total_plot<- did_total_plot + theme(plot.background = element_rect(fill = "white", color = "white"),  # Sets the plot background to white
+did_total_plot_cre<- did_total_plot + theme(plot.background = element_rect(fill = "white", color = "white"),  # Sets the plot background to white
 panel.background = element_rect(fill = "white", color = "white"),    panel.grid.major = element_blank(),  # Removes major grid lines
 panel.grid.minor = element_blank(), plot.title = element_text(face = "bold"),     strip.background = element_rect(fill = "white", color = "black", size = 0.4),  # White background with black border for facet labels
 strip.text = element_text(color = "black", size = 14, face = "bold"), axis.ticks = element_blank() # Black text for facet labels
 )
 
-  
-did_total_plot
+
 
 #####
 ####second derivative: #####
-p2netherl <- p2netherl +labs(title = "G. Second derivative, exemplar") +theme(plot.title = element_text(face = "bold"))
+p2netherl <- p2netherl +labs(title = "G. Second derivative, exemplar", y = "Second derivative") +theme(plot.title = element_text(face = "bold"))
 ######
 #a######
-ppred_alle2x <- ppred_alle2x +labs(title = "C. Predicted CRE Europe") +theme(plot.title = element_text(face = "bold"), legend.position = "bottom",  # Moves the legend to the bottom
+ppred_alle2x <- ppred_alle2x +labs(title = "C. Estimated CRE, Europe") +theme(plot.title = element_text(face = "bold"), legend.position = "bottom",  # Moves the legend to the bottom
                                                                                                                                legend.box = "horizontal")
 ppred_alle2x<- ppred_alle2x+  theme_minimal() +
   theme(
@@ -6033,9 +10075,9 @@ ppred_alle2x<- ppred_alle2x+  theme_minimal() +
     legend.position = "bottom",  # Moves the legend to the bottom
     legend.box = "horizontal",
     legend.title=element_blank())
-#GENgraph####
+#GENdergraph####
 
-plot_resultGen_carb_EU2<- plot_resultGen_carb_EU+ labs(title = "D. Predicted CRE Europe, by Gender") +theme(plot.title = element_text(face = "bold"))
+plot_resultGen_carb_EU2<- plot_resultGen_carb_EU+ labs(title = "D. Estimated CRE by biological sex, Europe") +theme(plot.title = element_text(face = "bold"))
 plot_resultGen_carb_EU2<- plot_resultGen_carb_EU2 +  theme_minimal() +
   theme(
     text = element_text(size = 12, family = "Times New Roman"),
@@ -6051,6 +10093,500 @@ plot_resultGen_carb_EU2 <- plot_resultGen_carb_EU2 +
         legend.title = element_blank())
 #####
 
+#COMBINE THEM ALL ####
+carbapenem_heatmap2ab<- carbapenem_heatmap2 +
+  theme(plot.title = element_text(hjust = 0, size = 14, face = "bold")) + labs(title = "A. CRE(%) 2004-22, Europe") 
+
+Carb_use1<- Carb_use + labs(title = "H. Growth rates and AMU, Europe") +theme(plot.title = element_text(face = "bold"))
+Carb_use1<- Carb_use1 + theme(
+  text = element_text(size = 12, family = "Times New Roman"),
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  strip.background = element_rect(fill = "white", color = "black"),
+  strip.text = element_text(size = 14, face = "bold"),
+  plot.title = element_text(face = "bold", size=14))
+
+
+combined_plot_fig_examplar2 <- (carbapenem_heatmap2ab + plot_carbapenem_eu_fig1) / 
+  (ppred_alle2x + plot_resultGen_carb_EU2 ) / 
+  (netherlands_plot + p3nethelands) / 
+  ( p2netherl + Carb_use1)  
+
+#Configure orientation
+combined_plot_fig_examplar <- combined_plot_fig_examplar2 + 
+  plot_layout(ncol = 2, nrow = 2, heights = rep(2, 2)) + facet_wrap(~variable, scales = "free")
+
+# Print the combined plot to check the layout
+print(combined_plot_fig_examplar)
+# Save the combined plot
+ggsave(filename = "Figure_examplarCRE_eu.tiff", plot = combined_plot_fig_examplar, device = "tiff", path = base_pathOut,
+       width = 17, height = 10, dpi = 500, units = "in")
+########
+
+
+#-----------------------------------------------------#
+#EUROPE 3GCRE
+#-----------------------------------------------------#
+
+#PANEL B#######
+cephalosporin_res_eu_avg <- calculate_averages(cephalosporin_resistance_by_year_country, "Country", Cephalosporin_res)
+# Apply the function to calculate averages specifically for netherlands now
+cephalosporin_res_eu_avg_ireland <- calculate_averages(
+  cephalosporin_resistance_by_year_country %>% filter(Country == 'France'), 
+  "Country", 
+  Cephalosporin_res)
+# Define a color palette for Europe
+color_palette <- c("Europe" = "#d95f02")
+
+plot_cephalosporin_europe <- function(data, data_ireland) {
+  ggplot() +
+    geom_violin(data = data, aes(x = Year_group, y = mean_resistance, fill = "Europe"), trim = TRUE, alpha = 0.6) +
+    geom_boxplot(data = data, aes(x = Year_group, y = mean_resistance, group = Year_group),
+                 width = 0.2, alpha = 0.6, outlier.shape = NA, color = "black", fill = "white") +
+    geom_point(data = data, aes(x = Year_group, y = mean_resistance, color = "Each European country included"), 
+               position = position_dodge(width = 0.8), size = 1.5, alpha = 0.5) +
+    scale_fill_manual(values = c("Europe" = "#d95f02")) +
+    scale_color_manual(values = c("Each European country included" = "#d95f02"), name = "", labels = "Each European country included") +
+    labs(title = "B. 3GCR trends, Europe",
+         subtitle = "",
+         x = "Year group", y = "3G cephalosporin-resistance (%)") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 360, hjust = 1),
+          plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+          plot.subtitle = element_text(hjust = 0.5, size = 12),
+          axis.title.x = element_text(size = 12),
+          axis.title.y = element_text(size = 12),
+          legend.position = "bottom",  # Position the legend at the bottom
+          legend.text = element_text(size = 12),
+          legend.title = element_text(size = 12)) +  # Size for the legend title
+    scale_y_continuous(limits = c(0, 70), breaks = seq(0, 70, by = 10), oob = scales::oob_squish) +
+    guides(fill = guide_none(), color = guide_legend(title = ""))  # Customize legends
+}
+
+# Generate and print the plot
+plot_cephalosporin_eu_fig1 <- plot_cephalosporin_europe(cephalosporin_res_eu_avg, cephalosporin_res_eu_avg_ireland)
+plot_cephalosporin_eu_fig1<- plot_cephalosporin_eu_fig1 +  theme(
+  text = element_text(size = 12, family = "Times New Roman"),
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  strip.background = element_rect(fill = "white", color = "black"),
+  strip.text = element_text(size = 14, face = "bold")
+)
+plot_cephalosporin_eu_fig1<-plot_cephalosporin_eu_fig1 + 
+  theme(plot.title = element_text(hjust = 0))
+
+######
+#PANEL E#####
+netherlands_plot <- netherlands_plot_3gcr +labs(title = "E. Estimated 3GCR, exemplar") +theme(plot.title = element_text(face = "bold"))
+##Growth rate######
+p3nethelands<- p3nethelands_3gcr +labs(title = "F. Growth rate, exemplar") +theme(plot.title = element_text(face = "bold"), axis.text.x= element_text(size=10))
+#####
+###FranceDID total####
+gram_did2neth<- gram_did2 %>%
+  filter(ihme_country_name=="France")
+library(hrbrthemes)  # For theme_ipsum()
+# Constants for the plot
+didTotalColor <- "#E76C3C"  # A reddish color for DID total
+  j01dBetaColor <- "#0011C2DF"  # A bluish color for j01d_beta
+    # Compute the coefficient for scaling
+  coeff <- max(gram_did2neth$did_total) / max(gram_did2neth$j01g_amino)
+  # Create the plot
+  did_total_plot <- ggplot(gram_did2neth, aes(x = Year)) +
+    geom_line(aes(y = did_total), size = 2, color = didTotalColor) +  # Line for did_total
+    geom_point(aes(y = did_total), color = "black", size = 3, shape = 21, fill = didTotalColor) +  # Points for did_total
+    geom_line(aes(y = j01g_amino * coeff), size = 2, color = j01dBetaColor) +  # Scaled line for j01d_beta
+    geom_point(aes(y = j01g_amino * coeff), color = "black", size = 3, shape = 21, fill = j01dBetaColor) +  # Points for did_total
+    scale_y_continuous(
+      name = "Total antibiotic usage in DIDs",
+      limits = c(9, 19),  # Manual limits for the primary axis
+      breaks = seq(9, 19, by = 1),  # Adjust breaks as necessary
+      sec.axis = sec_axis(
+        trans = ~ . / coeff, 
+        name = "Aminoglycosides (j01g) in DIDs",
+        breaks = seq(0.03, 0.07, by = 0.01)  # Adjust breaks as necessary for the secondary axis
+      )) +
+    #theme_ipsum() +  # Clean theme with good defaults
+    theme(
+      axis.title.y = element_text(color = didTotalColor, size = 14, hjust = 0.5),
+      axis.title.y.right = element_text(color = j01dBetaColor, size = 14,hjust = 0.5),
+      plot.title = element_text(hjust = 0.0),
+      axis.text.x= element_text( hjust = 1, vjust = 0.5, angle = 90),
+      text = element_text(size = 12, family = "Times New Roman")
+    ) +
+    labs(
+      title = "H. Antibiotic use, exemplar",
+      x = "Year"
+    ) +scale_x_continuous(breaks = seq(2004, 2018, by = 1)) 
+  
+  did_total_plot<- did_total_plot+ facet_wrap(~ihme_country_name, scales = "free_y") +theme(plot.title = element_text(face = "bold"))
+  did_total_plot_3gcr<- did_total_plot + theme(plot.background = element_rect(fill = "white", color = "white"),  # Sets the plot background to white
+                                          panel.background = element_rect(fill = "white", color = "white"),    panel.grid.major = element_blank(),  # Removes major grid lines
+                                          panel.grid.minor = element_blank(), plot.title = element_text(face = "bold"),     strip.background = element_rect(fill = "white", color = "black", size = 0.4),  # White background with black border for facet labels
+                                          strip.text = element_text(color = "black", size = 14, face = "bold"), axis.ticks = element_blank() # Black text for facet labels
+  )
+  
+  
+
+  
+#####
+####second derivative: #####
+  p2netherl <- p2netherl_3gcr +labs(title = "G. Second derivative, exemplar", y = "Second derivative") +theme(plot.title = element_text(face = "bold"),axis.text.x= element_text( hjust = 1, vjust = 0.5, angle = 90)) +scale_x_continuous(breaks = seq(2004, 2022, by = 1))
+######
+#Panel C, predictions europe ######
+  ppred_alle2x <- ppred_alle2x +labs(title = "C. Estimated 3GCR, Europe") +theme(plot.title = element_text(face = "bold"), legend.position = "bottom",  # Moves the legend to the bottom
+                                                                               legend.box = "horizontal")
+  ppred_alle2x<- ppred_alle2x+  theme_minimal() +
+    theme(
+      text = element_text(size = 12, family = "Times New Roman"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      strip.background = element_rect(fill = "white", color = "black"),
+      strip.text = element_text(size = 14, face = "bold"),
+      plot.title = element_text(face = "bold", size=14),
+      legend.position = "bottom",  # Moves the legend to the bottom
+      legend.box = "horizontal",
+      legend.title=element_blank())
+#GEndergraph####
+  plot_resultGen_carb_EU2<- plot_resultGen_cephalos_EU+ labs(title = "D. Estimated 3GCR by biological sex, Europe") +theme(plot.title = element_text(face = "bold"), size=12)
+  plot_resultGen_carb_EU2<- plot_resultGen_carb_EU2 +  theme_minimal() +
+    theme(
+      text = element_text(size = 12, family = "Times New Roman"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      strip.background = element_rect(fill = "white", color = "black"),
+      strip.text = element_text(size = 14, face = "bold"),
+      plot.title = element_text(face = "bold", size=14))
+  
+  plot_resultGen_carb_EU2 <- plot_resultGen_carb_EU2 +
+    theme(legend.position = "bottom",  # Moves the legend to the bottom
+          legend.box = "horizontal", 
+          legend.title = element_blank()) 
+  plot_resultGen_carb_EU2 <- plot_resultGen_carb_EU2+theme(plot.title = element_text(face = "bold"))
+#####
+#Combine them ALL #####
+cephalosporin_heatmap2ab<- cephalosporin_heatmap2  +
+    theme(plot.title = element_text(hjust = 0, size = 14, face = "bold")) + labs(title = "A. 3GCR(%) 2004-22, Europe") 
+
+  
+Ceph_fig1<- Ceph_fig + labs(title = "H. Growth rates and AMU, Europe") +theme(plot.title = element_text(face = "bold")) 
+Ceph_fig1<- Ceph_fig1 + theme(
+  text = element_text(size = 12, family = "Times New Roman"),
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  strip.background = element_rect(fill = "white", color = "black"),
+  strip.text = element_text(size = 14, face = "bold"),
+  plot.title = element_text(face = "bold", size=14))
+  
+    
+combined_plot_fig_examplar2 <- (cephalosporin_heatmap2ab + plot_cephalosporin_eu_fig1) / 
+    (ppred_alle2x + plot_resultGen_carb_EU2 ) / 
+    (netherlands_plot + p3nethelands) / 
+    ( p2netherl + Ceph_fig1)  
+  
+#Configure orientation
+combined_plot_fig_examplar2 <- combined_plot_fig_examplar2 + 
+    plot_layout(ncol = 2, nrow = 2, heights = rep(2, 2)) + facet_wrap(~variable, scales = "free")
+  
+# Print the combined plot to check the layout
+print(combined_plot_fig_examplar2)
+# Save the combined plot
+ggsave(filename = "Figure_examplar3GCR_eu.tiff", plot = combined_plot_fig_examplar2, device = "tiff", path = base_pathOut,
+         width = 17, height = 10, dpi = 500, units = "in")
+
+
+#####
+
+#-----------------------------------------------------#
+#US-states CRE
+#-----------------------------------------------------#
+#PANEL B#######
+carbapenem_res_us_avg <- calculate_averages(carbapenem_resistance_by_year_state, "State", Carbapenem_res)
+# Apply the function to calculate averages specifically for netherlands now
+carbapenem_res_us_avg_ireland <- calculate_averages(
+  carbapenem_resistance_by_year_state %>% filter(State == 'New York'), 
+  "State", 
+  Carbapenem_res)
+# Define a color palette for Europe
+color_palette <- c("Europe" = "#d95f02")
+
+plot_carbapenem_us <- function(data, data_ireland) {
+  ggplot() +
+    geom_violin(data = data, aes(x = Year_group, y = mean_resistance, fill = "Europe"), trim = TRUE, alpha = 0.6) +
+    geom_boxplot(data = data, aes(x = Year_group, y = mean_resistance, group = Year_group),
+                 width = 0.2, alpha = 0.6, outlier.shape = NA, color = "black", fill = "white") +
+    geom_point(data = data, aes(x = Year_group, y = mean_resistance, color = "Europe"), 
+               position = position_dodge(width = 0.8), size = 1.5, alpha = 0.5) +
+    scale_fill_manual(values = c("Europe" = "#d95f02")) +
+    scale_color_manual(values = c("Europe" = "#d95f02"), name = "", labels = "Each US state included") +
+    labs(title = "B. CRE trends, US",
+         subtitle = "",
+         x = "Year group", y = "Carbapenem-resistance (%)") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 360, hjust = 1),
+          plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+          plot.subtitle = element_text(hjust = 0.5, size = 12),
+          axis.title.x = element_text(size = 12),
+          axis.title.y = element_text(size = 12),
+          legend.position = "bottom",  # Position the legend at the bottom
+          legend.text = element_text(size = 12),
+          legend.title = element_text(size = 12)) +  # Size for the legend title
+    scale_y_continuous(limits = c(0, 25), breaks = seq(0, 25, by = 5), oob = scales::oob_squish) +
+    guides(fill = guide_none(), color = guide_legend(title = ""))  # Customize legends
+}
+
+# Generate and print the plot
+plot_carbapenem_us_fig1 <- plot_carbapenem_us(carbapenem_res_us_avg, carbapenem_res_us_avg_ireland)
+plot_carbapenem_us_fig1<- plot_carbapenem_us_fig1 +  theme(
+  text = element_text(size = 12, family = "Times New Roman"),
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  strip.background = element_rect(fill = "white", color = "black"),
+  strip.text = element_text(size = 14, face = "bold")
+)
+plot_carbapenem_us_fig1<-plot_carbapenem_us_fig1 + 
+  theme(plot.title = element_text(hjust = 0))
+
+######
+#PANEL E#####
+Florida_plot <- Florida_plot +labs(title = "E. Estimated CRE, exemplar")  +theme(plot.title = element_text(face = "bold"), axis.text.x= element_text(size=10))
+##Growth rate######
+p3Florida<- p3Florida +labs(title = "F. Growth rate, exemplar") +theme(plot.title = element_text(face = "bold"), axis.text.x= element_text(size=10))
+#####
+###NY_DID total####
+gram_did2_us2<- gram_did_us %>%
+  filter(ihme_country_name=="United States of America")
+library(hrbrthemes)  # For theme_ipsum()
+# Constants for the plot
+didTotalColor <- "#E76C3C"  # A reddish color for DID total
+j01dBetaColor <- "#0073C2FF"  # A bluish color for j01d_beta
+    # Compute the coefficient for scaling
+  #coeff <- max(gram_did2_us2$did_total) / max(gram_did2_us2$j01d_beta)
+  # Create the plot
+  did_total_plot_us <- ggplot(gram_did2_us2, aes(x = Year)) +
+    geom_line(aes(y = did_total), size = 2, color = didTotalColor) +  # Line for did_total
+    geom_point(aes(y = did_total), color = "black", size = 3, shape = 21, fill = didTotalColor) +  # Points for did_total
+    #geom_line(aes(y = j01d_beta * coeff), size = 2, color = j01dBetaColor) +  # Scaled line for j01d_beta
+    #geom_point(aes(y = j01d_beta * coeff), color = "black", size = 3, shape = 21, fill = j01dBetaColor) +  # Points for did_total
+    scale_y_continuous(name = "Total antibiotic usage in DIDs",
+      limits = c(23, 31),  # Manual limits for the primary axis
+      breaks = seq(23, 31, by = 1)) +
+    theme(
+      axis.title.y = element_text(color = didTotalColor, size = 14, hjust = 0.5),
+      #axis.title.y.right = element_text(color = j01dBetaColor, size = 14,hjust = 0.5),
+      plot.title = element_text(hjust = 0.0),
+      axis.text.x= element_text(angle = 90, hjust = 1, vjust = 0.5),
+      text = element_text(size = 12, family = "Times New Roman"),
+    ) +
+    labs(
+      title = "H. Antibiotic use, exemplar*",
+      x = "Year"
+    ) +scale_x_continuous(breaks = seq(2004, 2018, by = 1)) 
+  
+  
+  did_total_plot_us<- did_total_plot_us+ facet_wrap(~ihme_country_name, scales = "free_y") +theme(plot.title = element_text(face = "bold"))
+  did_total_plot_us<- did_total_plot_us + theme(plot.background = element_rect(fill = "white", color = "white"),  # Sets the plot background to white
+                                          panel.background = element_rect(fill = "white", color = "white"),    panel.grid.major = element_blank(),  # Removes major grid lines
+                                          panel.grid.minor = element_blank(), plot.title = element_text(face = "bold"),     strip.background = element_rect(fill = "white", color = "black", size = 0.4),  # White background with black border for facet labels
+                                          strip.text = element_text(color = "black", size = 14, face = "bold"), axis.ticks = element_blank() # Black text for facet labels
+  )
+  
+  did_total_plot_us
+  
+#####
+####second derivative: #####
+p2Florida <- p2Florida +labs(title = "G. Second derivative, exemplar", y = "Second derivative") +theme(plot.title = element_text(face = "bold"),axis.text.x= element_text( hjust = 1, vjust = 0.5, angle = 90)) +scale_x_continuous(breaks = seq(2004, 2022, by = 1))
+######
+#a######
+  ppred_alle2x <- ppred_alle2x +labs(title = "C. Estimated CRE, US") +theme(plot.title = element_text(face = "bold"), legend.position = "bottom",  # Moves the legend to the bottom
+                                                                                legend.box = "horizontal")
+  ppred_alle2x<- ppred_alle2x+  theme_minimal() +
+    theme(
+      text = element_text(size = 12, family = "Times New Roman"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      strip.background = element_rect(fill = "white", color = "black"),
+      strip.text = element_text(size = 14, face = "bold"),
+      plot.title = element_text(face = "bold", size=14),
+      legend.position = "bottom",  # Moves the legend to the bottom
+      legend.box = "horizontal",
+      legend.title=element_blank())
+#GENdergraph####
+  
+  plot_resultGen_carb_US2<- plot_resultGen_carb_US+ labs(title = "D. Estimated CRE by biological sex, US") +theme(plot.title = element_text(face = "bold"))
+  plot_resultGen_carb_US2<- plot_resultGen_carb_US2 +  theme_minimal() +
+    theme(
+      text = element_text(size = 12, family = "Times New Roman"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      strip.background = element_rect(fill = "white", color = "black"),
+      strip.text = element_text(size = 14, face = "bold"),
+      plot.title = element_text(face = "bold", size=14))
+  
+  plot_resultGen_carb_US2 <- plot_resultGen_carb_US2 +
+    theme(legend.position = "bottom",  # Moves the legend to the bottom
+          legend.box = "horizontal", 
+          legend.title = element_blank())
+#####
+  
+#COMBINE THEM ALL ####
+  carbapenem_heatmap2ab_us<- carbapenem_heatmap +
+    theme(plot.title = element_text(hjust = 0, size = 14, face = "bold")) + labs(title = "A. CRE(%) 2004-22, US") 
+  
+  combined_plot_fig_examplar2 <- (carbapenem_heatmap2ab_us + plot_carbapenem_us_fig1) / 
+    (ppred_alle2x_us + plot_resultGen_carb_US2 ) / 
+    (Florida_plot + p3Florida) / 
+    ( p2Florida + did_total_plot_us)  
+  
+  #Configure orientation
+  combined_plot_fig_examplar <- combined_plot_fig_examplar2 + 
+    plot_layout(ncol = 2, nrow = 2, heights = rep(2, 2)) + facet_wrap(~variable, scales = "free")
+  
+  # Print the combined plot to check the layout
+  print(combined_plot_fig_examplar)
+  # Save the combined plot
+  ggsave(filename = "Figure_examplarCRE_us.tiff", plot = combined_plot_fig_examplar, device = "tiff", path = base_pathOut,
+         width = 17, height = 10, dpi = 500, units = "in")
+########
+  
+
+
+#-----------------------------------------------------#
+#US-states 3GCRE
+#-----------------------------------------------------#
+#PANEL B#######
+  cephalosporin_res_us_avg <- calculate_averages(cephalosporin_resistance_by_year_state, "State", Cephalosporin_res)
+  # Apply the function to calculate averages specifically for netherlands now
+  cephalosporin_res_us_avg_ireland <- calculate_averages(
+    cephalosporin_resistance_by_year_state %>% filter(State == 'New York'), 
+    "State", 
+    Cephalosporin_res)
+  # Define a color palette for Europe
+  color_palette <- c("Europe" = "#d95f02")
+  plot_cephalosporin_us <- function(data, data_ireland) {
+    ggplot() +
+      geom_violin(data = data, aes(x = Year_group, y = mean_resistance, fill = "Europe"), trim = TRUE, alpha = 0.6) +
+      geom_boxplot(data = data, aes(x = Year_group, y = mean_resistance, group = Year_group),
+                   width = 0.2, alpha = 0.6, outlier.shape = NA, color = "black", fill = "white") +
+      geom_point(data = data, aes(x = Year_group, y = mean_resistance, color = "Europe"), 
+                 position = position_dodge(width = 0.8), size = 1.5, alpha = 0.5) +
+      scale_fill_manual(values = c("Europe" = "#d95f02")) +
+      scale_color_manual(values = c("Europe" = "#d95f02"), name = "", labels = "Each US state") +
+      labs(title = "B. 3GCR trends, US",
+           subtitle = "",
+           x = "Year group", y = "3GCR (%)") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 360, hjust = 1),
+            plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+            plot.subtitle = element_text(hjust = 0.5, size = 12),
+            axis.title.x = element_text(size = 12),
+            axis.title.y = element_text(size = 12),
+            legend.position = "bottom",  # Position the legend at the bottom
+            legend.text = element_text(size = 12),
+            legend.title = element_text(size = 12)) +  # Size for the legend title
+      scale_y_continuous(limits = c(0, 60), breaks = seq(0, 60, by = 10), oob = scales::oob_squish) +
+      guides(fill = guide_none(), color = guide_legend(title = ""))  # Customize legends
+  }
+  # Generate and print the plot
+  plot_cephalosporin_us_fig1 <- plot_cephalosporin_us(cephalosporin_res_us_avg, cephalosporin_res_us_avg_ireland)
+  plot_cephalosporin_us_fig1<- plot_cephalosporin_us_fig1 +  theme(
+    text = element_text(size = 12, family = "Times New Roman"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(size = 14, face = "bold")
+  )
+  plot_cephalosporin_us_fig1<-plot_cephalosporin_us_fig1 + 
+    theme(plot.title = element_text(hjust = 0))
+  
+#####
+#PANEL C#####
+Florida_plot_egcr <- Florida_plot_egcr +labs(title = "E. Estimated 3GCR, exemplar")  +theme(plot.title = element_text(face = "bold"), axis.text.x= element_text(size=10))
+#####
+##Growth rate######
+p3Florida_egcr<- p3Florida_egcr +labs(title = "F. Growth rate, exemplar") +theme(plot.title = element_text(face = "bold"), axis.text.x= element_text(size=10))
+#####
+###USDID total####
+  gram_did2_us2<- gram_did_us %>%
+    filter(ihme_country_name=="United States of America")
+  library(hrbrthemes)  # For theme_ipsum()
+  # Constants for the plot
+  didTotalColor <- "#E76C3C"  # A reddish color for DID total
+    j01dBetaColor <- "#0073C2FF"  # A bluish color for j01d_beta
+      # Compute the coefficient for scaling
+    #coeff <- max(gram_did2_us2$did_total) / max(gram_did2_us2$j01d_beta)
+    # Create the plot
+    did_total_plot_us <- ggplot(gram_did2_us2, aes(x = Year)) +
+      geom_line(aes(y = did_total), size = 2, color = didTotalColor) +  # Line for did_total
+      geom_point(aes(y = did_total), color = "black", size = 3, shape = 21, fill = didTotalColor) +  # Points for did_total
+      #geom_line(aes(y = j01d_beta * coeff), size = 2, color = j01dBetaColor) +  # Scaled line for j01d_beta
+      #geom_point(aes(y = j01d_beta * coeff), color = "black", size = 3, shape = 21, fill = j01dBetaColor) +  # Points for did_total
+      scale_y_continuous(name = "Total antibiotic usage in DIDs",
+                         limits = c(23, 31),  # Manual limits for the primary axis
+                         breaks = seq(23, 31, by = 1)) +
+      theme(
+        axis.title.y = element_text(color = didTotalColor, size = 14, hjust = 0.5),
+        #axis.title.y.right = element_text(color = j01dBetaColor, size = 14,hjust = 0.5),
+        plot.title = element_text(hjust = 0.0),
+        axis.text.x= element_text(angle = 90, hjust = 1, vjust = 0.5),
+        text = element_text(size = 12, family = "Times New Roman"),
+      ) +
+      labs(
+        title = "H. Antibiotic use, exemplar*",
+        x = "Year"
+      ) +scale_x_continuous(breaks = seq(2004, 2018, by = 1)) 
+    
+    
+    did_total_plot_us<- did_total_plot_us+ facet_wrap(~ihme_country_name, scales = "free_y") +theme(plot.title = element_text(face = "bold"))
+    did_total_plot_us<- did_total_plot_us + theme(plot.background = element_rect(fill = "white", color = "white"),  # Sets the plot background to white
+                                                  panel.background = element_rect(fill = "white", color = "white"),    panel.grid.major = element_blank(),  # Removes major grid lines
+                                                  panel.grid.minor = element_blank(), plot.title = element_text(face = "bold"),     strip.background = element_rect(fill = "white", color = "black", size = 0.4),  # White background with black border for facet labels
+                                                  strip.text = element_text(color = "black", size = 14, face = "bold"), axis.ticks = element_blank() # Black text for facet labels
+    )
+    
+    did_total_plot_us
+    
+#####
+####second derivative: #####
+p2Florida_egcr<- p2Florida_egcr +labs(title = "G. Second derivative, exemplar", y = "Second derivative") +theme(plot.title = element_text(face = "bold"),axis.text.x= element_text( hjust = 1, vjust = 0.5, angle = 90)) +scale_x_continuous(breaks = seq(2004, 2022, by = 1))
+###### 
+#GENdergraph####
+    
+    plot_resultGen_cephalos_US2<- plot_resultGen_cephalos_US+ labs(title = "D. Estimated 3GCR by biological sex, US") +theme(plot.title = element_text(face = "bold"))
+    plot_resultGen_cephalos_US2<- plot_resultGen_cephalos_US2 +  theme_minimal() +
+      theme(
+        text = element_text(size = 12, family = "Times New Roman"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.background = element_rect(fill = "white", color = "black"),
+        strip.text = element_text(size = 14, face = "bold"),
+        plot.title = element_text(face = "bold", size=14))
+    
+    plot_resultGen_cephalos_US2 <- plot_resultGen_cephalos_US2 +
+      theme(legend.position = "bottom",  # Moves the legend to the bottom
+            legend.box = "horizontal", 
+            legend.title = element_blank())
+    plot_resultGen_cephalos_US2 <- plot_resultGen_cephalos_US2 +
+      labs(y = "3GCR (%)")
+#####
+  
+#COMBINE THEM ALL ####
+  cephalosporin_heatmap2ab_us<- cephalosporin_heatmap +
+    theme(plot.title = element_text(hjust = 0, size = 14, face = "bold")) + labs(title = "A. 3GCR(%) 2004-22, US") 
+  
+  combined_plot_fig_examplar2 <- (cephalosporin_heatmap2ab_us + plot_cephalosporin_us_fig1) / 
+    (ppred_alle2x_egcr + plot_resultGen_cephalos_US2 ) / 
+    (Florida_plot_egcr + p3Florida_egcr) / 
+    ( p2Florida_egcr + did_total_plot_us)  
+  
+  #Configure orientation
+  combined_plot_fig_examplarb <- combined_plot_fig_examplar2 + 
+    plot_layout(ncol = 2, nrow = 2, heights = rep(2, 2)) + facet_wrap(~variable, scales = "free")
+  
+  # Save the combined plot
+  ggsave(filename = "Figure_examplar3GCRE_us.tiff", plot = combined_plot_fig_examplarb, device = "tiff", path = base_pathOut,
+         width = 17, height = 10, dpi = 500, units = "in")
+######## 
+  
 ######
 #------------------------------------------------------------------------------------------------------#
 #------------------------------------------------------------------------------------------------------#
@@ -6089,6 +10625,118 @@ apis <- listCensusApis()
 #  key= '859acf11fb09589d811b3bb7d39b3bc2b503dfe1')
 #######
 
+######
+#Descriptive stats:#
+  country_counts <- data_atlas_eu_enterob_carbap %>%
+group_by(Country) %>%
+summarise(Observation_Count = n()) %>%
+arrange(desc(Observation_Count))
+# View the result
+print(country_counts)
+
+#Descriptive table, counts and rates
+
+total_isolates_sum <- sum(country_resistance_carbap_eu$Total_Isolates, na.rm = TRUE)
+total_isolatesPo_sum <- sum(country_resistance_carbap_eu$AMR_Positive, na.rm = TRUE)
+
+total_isolates_sum <- sum(country_resistance_carbap_euAgeg$Total_Isolates, na.rm = TRUE)
+amr_positive_by_Ageg <- country_resistance_carbap_euAgeg %>%
+  group_by(Agegroup) %>%
+  summarise(Total_AMR_Positive = sum(AMR_Positive, na.rm = TRUE))
+positive_by_Ageg <- country_resistance_carbap_euAgeg %>%
+  group_by(Agegroup) %>%
+  summarise(Total_Isolates = sum(Total_Isolates, na.rm = TRUE))
+
+total_isolates_sum <- sum(country_resistance_carbap_euGen$Total_Isolates, na.rm = TRUE)
+amr_positive_by_gender <- country_resistance_carbap_euGen %>%
+  group_by(Gender) %>%
+  summarise(Total_AMR_Positive = sum(AMR_Positive, na.rm = TRUE))
+positive_by_gender <- country_resistance_carbap_euGen %>%
+  group_by(Gender) %>%
+  summarise(Total_Isolates = sum(Total_Isolates, na.rm = TRUE))
 
 
 
+total_isolates_sum <- sum(country_resistance_cephalos_eu$Total_Isolates, na.rm = TRUE)
+total_isolatesPo_sum <- sum(country_resistance_cephalos_eu$AMR_Positive, na.rm = TRUE)
+
+total_isolates_sum <- sum(country_resistance_cephalos_euAgeg$Total_Isolates, na.rm = TRUE)
+amr_positive_by_Ageg <- country_resistance_cephalos_euAgeg %>%
+  group_by(Agegroup) %>%
+  summarise(Total_AMR_Positive = sum(AMR_Positive, na.rm = TRUE))
+positive_by_Ageg <- country_resistance_cephalos_euAgeg %>%
+  group_by(Agegroup) %>%
+  summarise(Total_Isolates = sum(Total_Isolates, na.rm = TRUE))
+amr_positive_by_Ageg
+positive_by_Ageg
+total_isolates_sum <- sum(country_resistance_cephalos_euGen$Total_Isolates, na.rm = TRUE)
+amr_positive_by_gender <- country_resistance_cephalos_euGen %>%
+  group_by(Gender) %>%
+  summarise(Total_AMR_Positive = sum(AMR_Positive, na.rm = TRUE))
+positive_by_gender <- country_resistance_cephalos_euGen %>%
+  group_by(Gender) %>%
+  summarise(Total_Isolates = sum(Total_Isolates, na.rm = TRUE))
+
+
+total_isolates_sum <- sum(country_resistance_mdr_eu$Total_Isolates, na.rm = TRUE)
+total_isolatesPo_sum <- sum(country_resistance_mdr_eu$MDR_Positive, na.rm = TRUE)
+
+total_isolates_sum <- sum(country_resistance_mdr_euAgeg$Total_Isolates, na.rm = TRUE)
+amr_positive_by_Ageg <- country_resistance_mdr_euAgeg %>%
+  group_by(Agegroup) %>%
+  summarise(Total_AMR_Positive = sum(MDR_Positive, na.rm = TRUE))
+positive_by_Ageg <- country_resistance_mdr_euAgeg %>%
+  group_by(Agegroup) %>%
+  summarise(Total_Isolates = sum(Total_Isolates, na.rm = TRUE))
+
+total_isolates_sum <- sum(country_resistance_mdr_euGen$Total_Isolates, na.rm = TRUE)
+amr_positive_by_gender <- country_resistance_mdr_euGen %>%
+  group_by(Gender) %>%
+  summarise(Total_AMR_Positive = sum(MDR_Positive, na.rm = TRUE))
+positive_by_gender <- country_resistance_cephalos_euGen %>%
+  group_by(Gender) %>%
+  summarise(Total_Isolates = sum(Total_Isolates, na.rm = TRUE))
+
+
+#Descriptive stats for the US:
+
+total_isolates_sum <- sum(country_resistance_carbap_us$Total_Isolates, na.rm = TRUE)
+total_isolatesPo_sum <- sum(country_resistance_carbap_us$AMR_Positive, na.rm = TRUE)
+total_isolates_sum <- sum(country_resistance_cephalos_us$Total_Isolates, na.rm = TRUE)
+total_isolatesPo_sum <- sum(country_resistance_cephalos_us$AMR_Positive, na.rm = TRUE)
+total_isolates_sum <- sum(country_resistance_mdr_us$Total_Isolates, na.rm = TRUE)
+total_isolatesPo_sum <- sum(country_resistance_mdr_us$MDR_Positive, na.rm = TRUE)
+
+total_isolates_sum <- sum(state_resistance_carbapAgeg$Total_Isolates, na.rm = TRUE)
+amr_positive_by_Ageg <- state_resistance_carbapAgeg %>%
+  group_by(Agegroup) %>%
+  summarise(Total_AMR_Positive = sum(AMR_Positive, na.rm = TRUE))
+
+positive_by_Ageg <- state_resistance_carbapAgeg %>%
+  group_by(Agegroup) %>%
+  summarise(Total_Isolates = sum(Total_Isolates, na.rm = TRUE))
+
+total_isolates_sum <- sum(country_resistance_carbap_euGen$Total_Isolates, na.rm = TRUE)
+amr_positive_by_gender <- state_resistance_carbapGen %>%
+  group_by(Gender) %>%
+  summarise(Total_AMR_Positive = sum(AMR_Positive, na.rm = TRUE))
+positive_by_gender <- state_resistance_carbapGen %>%
+  group_by(Gender) %>%
+  summarise(Total_Isolates = sum(Total_Isolates, na.rm = TRUE))
+
+amr_positive_by_gender <- state_resistance_cephalosGen %>%
+  group_by(Gender) %>%
+  summarise(Total_AMR_Positive = sum(AMR_Positive, na.rm = TRUE))
+amr_positive_by_gender <- state_resistance_mdrGen %>%
+  group_by(Gender) %>%
+  summarise(Total_AMR_Positive = sum(MDR_Positive, na.rm = TRUE))
+
+amr_positive_by_Ageg <- state_resistance_cephalosAgeg %>%
+  group_by(Agegroup) %>%
+  summarise(Total_AMR_Positive = sum(AMR_Positive, na.rm = TRUE))
+
+amr_positive_by_Ageg <- state_resistance_mdrAgeg %>%
+  group_by(Agegroup) %>%
+  summarise(Total_AMR_Positive = sum(MDR_Positive, na.rm = TRUE))
+
+#####
