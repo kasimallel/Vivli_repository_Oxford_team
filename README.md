@@ -1,10 +1,10 @@
 Proposal Title: Advancing monitoring and prediction of antimicrobial resistance trajectories using flexible spatiotemporal modelling: A roadmap for early warning systems
 
 Authors, University of Oxford:
-Kasim Allel
-David Smith
-Koen Pouwels
-Nam Nguyen
+Kasim Allel,
+David Smith,
+Koen Pouwels,
+Nam Nguyen,
 Sam Lipworth
 
 
